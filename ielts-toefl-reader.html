@@ -608,7 +608,7 @@
   }
   /* 登录页三层背景：底层登录后内容（80px 模糊）+ 白色半透明蒙版 */
   #itr-app .itr-auth-bg {
-    position: absolute; inset: 0; z-index: 1;
+    position: absolute; inset: 0; z-index: 0;
     overflow: auto;
     background: linear-gradient(180deg, #f7f4ef 0%, #f0ebe3 40%, #f5f2ed 100%);
   }
@@ -634,7 +634,7 @@
     pointer-events: none;
   }
   #itr-app .itr-auth-particles {
-    position: fixed; inset: -3%; z-index: 2;
+    position: fixed; inset: -3%; z-index: 1;
     display: block;
     pointer-events: none;
     opacity: .78;
