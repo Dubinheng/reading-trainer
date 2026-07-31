@@ -694,16 +694,19 @@
     border-radius: 18px;
     overflow: hidden;
   }
-  /* 标题区 - 使用 logo_t.png（含文字）等比例缩放 */
+  /* 标题区：横版 Logo 在固定容器内居中裁切，避免高分屏下位移缩放失真。 */
   .itr-auth-header {
     display: block;
-    margin-bottom: 10px;
+    height: 86px;
+    margin: 0 8px 10px;
+    overflow: hidden;
     text-align: left;
   }
   .itr-auth-header .itr-auth-logo {
     display: block;
-    width: 82%; max-width: 360px; height: auto;
-    max-height: 112px;
+    width: 100%; height: 100%;
+    max-width: none; max-height: none;
+    object-fit: cover; object-position: center bottom;
   }
   .itr-auth-divider {
     border: 0; border-top: 1px solid #cdd2d5;
@@ -828,15 +831,13 @@
   @media (min-width: 641px) {
     #itr-app .itr-auth-inner { padding: 13px; }
     .itr-auth-header {
-      height: 121px;
-      margin: 8px 0 10px;
-      overflow: hidden;
+      height: 92px;
+      margin: 8px 8px 10px;
     }
     .itr-auth-header .itr-auth-logo {
-      width: 103%;
-      max-width: none;
-      max-height: none;
-      transform: translate(-5%, -41%);
+      width: 100%; height: 100%;
+      object-fit: cover; object-position: center bottom;
+      transform: none;
     }
     .itr-auth-sub { font-size: 14px; }
     .itr-auth-divider { margin-left: 8px; margin-right: 8px; }
@@ -853,8 +854,8 @@
   @media (max-width: 640px) {
     .itr-auth-card { width: min(420px, 94vw, calc((100vh - 32px) * .689)); }
     #itr-app .itr-auth-inner { padding: 15px 16px 17px; justify-content: center; }
-    .itr-auth-header { margin-bottom: 4px; }
-    .itr-auth-header .itr-auth-logo { width: 78%; max-height: 58px; }
+    .itr-auth-header { height: 68px; margin: 0 0 4px; }
+    .itr-auth-header .itr-auth-logo { width: 100%; height: 100%; object-fit: cover; object-position: center bottom; }
     .itr-auth-divider { margin: 0 0 9px; }
     .itr-auth-sub { margin: 0 0 14px; font-size: 10px; }
     .itr-auth-form .itr-field { margin-bottom: 11px; }
