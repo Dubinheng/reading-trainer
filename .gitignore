@@ -1,4 +1,4 @@
 .DS_Store
+.playwright-cli/
 reading-trainer/output/
 reading-trainer/tmp/
-
