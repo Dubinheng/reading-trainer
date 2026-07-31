@@ -694,7 +694,7 @@
     border-radius: 18px;
     overflow: hidden;
   }
-  /* 标题区：横版 Logo 在固定容器内居中裁切，避免高分屏下位移缩放失真。 */
+  /* 标题区：使用已去除透明空白的 Logo，完整等比显示，禁止裁切火焰图形。 */
   .itr-auth-header {
     display: block;
     height: 86px;
@@ -706,7 +706,7 @@
     display: block;
     width: 100%; height: 100%;
     max-width: none; max-height: none;
-    object-fit: cover; object-position: center bottom;
+    object-fit: contain; object-position: center;
   }
   .itr-auth-divider {
     border: 0; border-top: 1px solid #cdd2d5;
@@ -839,7 +839,7 @@
     }
     .itr-auth-header .itr-auth-logo {
       width: 100%; height: 100%;
-      object-fit: cover; object-position: center bottom;
+      object-fit: contain; object-position: center;
       transform: none;
     }
     .itr-auth-sub { font-size: 14px; }
@@ -858,7 +858,7 @@
     .itr-auth-card { width: min(420px, 94vw, calc((100vh - 32px) * .689)); }
     #itr-app .itr-auth-inner { padding: 15px 16px 17px; justify-content: center; }
     .itr-auth-header { height: 68px; margin: 0 0 4px; }
-    .itr-auth-header .itr-auth-logo { width: 100%; height: 100%; object-fit: cover; object-position: center bottom; }
+    .itr-auth-header .itr-auth-logo { width: 100%; height: 100%; object-fit: contain; object-position: center; }
     .itr-auth-divider { margin: 0 0 9px; }
     .itr-auth-sub { margin: 0 0 14px; font-size: 10px; }
     .itr-auth-form .itr-field { margin-bottom: 11px; }
@@ -1072,7 +1072,7 @@
       <span class="itr-auth-underlay" aria-hidden="true"></span>
       <div class="itr-auth-inner">
       <div class="itr-auth-header">
-        <img class="itr-auth-logo" src="assets/logo_header.png" alt="新世纪 reading trainer">
+        <img class="itr-auth-logo" src="assets/logo_header_compact.png" alt="新世纪 reading trainer">
       </div>
       <hr class="itr-auth-divider">
       <p class="itr-auth-sub">登陆后进入练习或教师中心（ 学生/教师分别注册 ）</p>
