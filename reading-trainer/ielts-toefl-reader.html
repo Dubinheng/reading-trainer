@@ -603,6 +603,7 @@
     position: fixed; inset: 0; z-index: 100;
     display: flex; align-items: center; justify-content: center;
     overflow: hidden;
+    isolation: isolate;
     animation: itr-gate-in .4s var(--itr-ease) both;
   }
   /* 登录页三层背景：底层登录后内容（80px 模糊）+ 白色半透明蒙版 */
@@ -632,7 +633,77 @@
       rgba(250,248,244,.24);
     pointer-events: none;
   }
+  #itr-app .itr-auth-particles {
+    position: fixed; inset: -3%; z-index: 2;
+    display: block;
+    pointer-events: none;
+    opacity: .78;
+    background:
+      radial-gradient(circle at 4% 8%, rgba(44,191,120,.72) 0 2px, transparent 3px),
+      radial-gradient(circle at 14% 19%, rgba(39,189,222,.58) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 24% 6%, rgba(0,137,254,.48) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 33% 27%, rgba(44,191,120,.52) 0 2px, transparent 3px),
+      radial-gradient(circle at 46% 12%, rgba(39,189,222,.64) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 58% 31%, rgba(0,137,254,.48) 0 2px, transparent 3px),
+      radial-gradient(circle at 69% 7%, rgba(44,191,120,.6) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 82% 22%, rgba(39,189,222,.54) 0 2px, transparent 3px),
+      radial-gradient(circle at 95% 11%, rgba(0,137,254,.5) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 7% 43%, rgba(0,137,254,.5) 0 2px, transparent 3px),
+      radial-gradient(circle at 18% 57%, rgba(44,191,120,.62) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 91% 48%, rgba(39,189,222,.64) 0 2px, transparent 3px),
+      radial-gradient(circle at 97% 66%, rgba(44,191,120,.5) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 5% 79%, rgba(39,189,222,.54) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 16% 91%, rgba(0,137,254,.5) 0 2px, transparent 3px),
+      radial-gradient(circle at 31% 84%, rgba(44,191,120,.6) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 48% 96%, rgba(39,189,222,.62) 0 2px, transparent 3px),
+      radial-gradient(circle at 64% 87%, rgba(0,137,254,.48) 0 1.5px, transparent 2.5px),
+      radial-gradient(circle at 78% 97%, rgba(44,191,120,.58) 0 2px, transparent 3px),
+      radial-gradient(circle at 93% 84%, rgba(39,189,222,.6) 0 1.5px, transparent 2.5px);
+  }
+  #itr-app .itr-auth-particles::after {
+    content: ""; position: absolute; inset: 0;
+    background:
+      radial-gradient(circle at 11% 34%, rgba(39,189,222,.18) 0 5px, transparent 8px),
+      radial-gradient(circle at 87% 37%, rgba(0,137,254,.16) 0 6px, transparent 9px),
+      radial-gradient(circle at 22% 73%, rgba(44,191,120,.18) 0 5px, transparent 8px),
+      radial-gradient(circle at 76% 68%, rgba(39,189,222,.16) 0 6px, transparent 9px);
+  }
+  #itr-app .itr-auth-particle {
+    position: absolute; width: 4px; height: 4px;
+    border-radius: 50%;
+    background: #27BDDE;
+    opacity: .5;
+    animation: itr-auth-particle-float 6.5s ease-in-out infinite alternate;
+  }
+  #itr-app .itr-auth-particle:nth-child(3n+1) { background: #2CBF78; }
+  #itr-app .itr-auth-particle:nth-child(3n+2) { background: #0089FE; }
+  #itr-app .itr-auth-particle:nth-child(2n) { width: 3px; height: 3px; animation-duration: 8.5s; }
+  #itr-app .itr-auth-particle:nth-child(4n) { width: 5px; height: 5px; animation-duration: 10s; }
+  #itr-app .itr-auth-particle:nth-child(1) { left: 7%; top: 8%; }
+  #itr-app .itr-auth-particle:nth-child(2) { left: 21%; top: 3%; }
+  #itr-app .itr-auth-particle:nth-child(3) { left: 39%; top: 7%; }
+  #itr-app .itr-auth-particle:nth-child(4) { left: 62%; top: 4%; }
+  #itr-app .itr-auth-particle:nth-child(5) { left: 82%; top: 9%; }
+  #itr-app .itr-auth-particle:nth-child(6) { left: 96%; top: 22%; }
+  #itr-app .itr-auth-particle:nth-child(7) { left: 98%; top: 45%; }
+  #itr-app .itr-auth-particle:nth-child(8) { left: 96%; top: 70%; }
+  #itr-app .itr-auth-particle:nth-child(9) { left: 89%; top: 92%; }
+  #itr-app .itr-auth-particle:nth-child(10) { left: 73%; top: 97%; }
+  #itr-app .itr-auth-particle:nth-child(11) { left: 52%; top: 93%; }
+  #itr-app .itr-auth-particle:nth-child(12) { left: 31%; top: 97%; }
+  #itr-app .itr-auth-particle:nth-child(13) { left: 12%; top: 91%; }
+  #itr-app .itr-auth-particle:nth-child(14) { left: 2%; top: 76%; }
+  #itr-app .itr-auth-particle:nth-child(15) { left: 3%; top: 54%; }
+  #itr-app .itr-auth-particle:nth-child(16) { left: 1%; top: 31%; }
+  @keyframes itr-auth-particle-float {
+    from { transform: translate3d(0, 6px, 0) scale(.86); opacity: .32; }
+    to { transform: translate3d(3px, -9px, 0) scale(1.12); opacity: .82; }
+  }
   #itr-app[data-itr-theme="dark"] .itr-auth-bg-overlay { background: rgba(244,249,251,.55); }
+  #itr-app[data-itr-theme="dark"] .itr-auth-particles { opacity: .72; }
+  @media (prefers-reduced-motion: reduce) {
+    #itr-app .itr-auth-particle { animation: none !important; }
+  }
   #itr-app .itr-card-mock {
     background: var(--itr-surface, #fff);
     border: 1px solid var(--itr-border, #e5e5e5);
@@ -676,11 +747,7 @@
     position: relative; z-index: 0;
     display: block; width: 100%; height: 100%;
     object-fit: fill;
-    animation: itr-auth-frame-breathe 5.5s ease-in-out 1s infinite;
-  }
-  @keyframes itr-auth-frame-breathe {
-    0%, 100% { filter: saturate(1) brightness(1); }
-    50% { filter: saturate(1.06) brightness(1.025); }
+    animation: none;
   }
   #itr-app .itr-auth-inner {
     position: absolute;
@@ -1065,6 +1132,12 @@
           </div>
         </div>
       </div>
+    </div>
+    <div class="itr-auth-particles" aria-hidden="true">
+      <i class="itr-auth-particle"></i><i class="itr-auth-particle"></i><i class="itr-auth-particle"></i><i class="itr-auth-particle"></i>
+      <i class="itr-auth-particle"></i><i class="itr-auth-particle"></i><i class="itr-auth-particle"></i><i class="itr-auth-particle"></i>
+      <i class="itr-auth-particle"></i><i class="itr-auth-particle"></i><i class="itr-auth-particle"></i><i class="itr-auth-particle"></i>
+      <i class="itr-auth-particle"></i><i class="itr-auth-particle"></i><i class="itr-auth-particle"></i><i class="itr-auth-particle"></i>
     </div>
     <div class="itr-auth-bg-overlay" aria-hidden="true"></div>
     <div class="itr-auth-card">
