@@ -713,7 +713,7 @@
     margin: 0 0 10px;
   }
   .itr-auth-sub {
-    font-size: clamp(11px, 1.5vw, 13px); color: #74787d; text-align: center;
+    font-size: clamp(11px, 1.5vw, 13px); color: #555d66; text-align: center;
     margin: 0 0 clamp(18px, 3.2vh, 30px); line-height: 1.5;
   }
   /* 表单字段 */
@@ -725,14 +725,14 @@
   #itr-app .itr-auth-form input, #itr-app .itr-auth-form select {
     width: 100%; box-sizing: border-box;
     min-height: 46px; padding: 11px 14px; border-radius: 12px; border: 1.5px solid #d0d4d7;
-    background: rgba(255,255,255,.96); font-size: 14px; color: #25282b;
+    background: rgba(255,255,255,.98); font-size: 14px; color: #20242a;
     transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
   }
   #itr-app .itr-auth-form input:focus, #itr-app .itr-auth-form select:focus {
     border-color: var(--itr-primary); box-shadow: 0 0 0 3px rgba(39,189,222,.15);
     outline: none;
   }
-  #itr-app .itr-auth-form input::placeholder { color: #bbb; }
+  #itr-app .itr-auth-form input::placeholder { color: #7b838c; opacity: 1; }
   #itr-app .itr-auth-form select {
     appearance: none; -webkit-appearance: none;
     color: #333;
@@ -807,7 +807,7 @@
   }
   #itr-login-form .itr-auth-secondary button:hover { text-decoration: underline; }
 
-  /* 时间线式入场：品牌 → 说明 → 字段 → 操作 */
+  /* 登录表单必须立即清晰可读；不再对文字和字段做延迟透明淡入。 */
   @keyframes itr-auth-item-in {
     from { opacity: 0; transform: translate3d(0, 10px, 0); }
     to { opacity: 1; transform: translate3d(0, 0, 0); }
@@ -816,7 +816,9 @@
   #itr-login-form .itr-auth-primary,
   #itr-login-form .itr-auth-secondary,
   .itr-auth-header, .itr-auth-divider, .itr-auth-sub {
-    animation: itr-auth-item-in .52s var(--itr-ease) both;
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
   .itr-auth-header { animation-delay: .16s; }
   .itr-auth-divider { animation-delay: .24s; }
