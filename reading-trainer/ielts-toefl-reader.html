@@ -4382,11 +4382,11 @@ function showRoleGate() {
     var html = '<div class="itr-adm-form"><label>飞书多维表格实时同步</label>'
       + '<p class="itr-hint">开启后，账号 / 班级 / 邀请码 / 设置 / 生词本 / 词汇书 / 成绩 / 题库会在操作后自动同步到飞书多维表格。</p>'
       + '<label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;margin:12px 0;"><input type="checkbox" id="itr-feishu-enabled" ' + (cfg.enabled ? 'checked' : '') + ' /> 启用实时同步</label>'
-      + '<div class="itr-field"><label>Access Token（个人访问令牌 / User Access Token）</label><input type="password" id="itr-feishu-token" placeholder="u- 或 t- 开头的 token" autocomplete="off" value="' + escapeHtml(cfg.accessToken || '') + '" /></div>'
+      + '<div class="itr-field"><label>Access Token（User Access Token）</label><input type="password" id="itr-feishu-token" placeholder="通过飞书 OAuth / API 调试台获取" autocomplete="off" value="' + escapeHtml(cfg.accessToken || '') + '" /></div>'
       + '<div class="itr-field"><label>Base Token</label><input type="text" id="itr-feishu-base" readonly value="' + escapeHtml(cfg.baseToken) + '" /></div>'
       + '<div class="itr-row" style="margin-top:10px;"><button type="button" class="itr-btn itr-primary" id="itr-feishu-save">保存配置</button><button type="button" class="itr-btn itr-ghost" id="itr-feishu-sync">立即同步</button></div>'
       + '<div id="itr-feishu-msg" style="margin-top:8px;font-size:13px;color:var(--itr-muted);"></div>'
-      + '<div class="itr-hint">注意：网页端直接调用飞书 OpenAPI 可能受 CORS 限制；如在浏览器中同步失败，请通过本地服务器 / 后端代理部署。</div></div>';
+      + '<div class="itr-hint">Access Token 不在多维表格内，需要通过飞书开放平台应用的 OAuth 授权流程获取。注意：网页端直接调用飞书 OpenAPI 可能受 CORS 限制；正式使用应通过后端代理，并由后端安全保存和刷新 Token。</div></div>';
     var c = document.getElementById('itr-admin-content'); if(c) c.innerHTML = html;
     var msg = document.getElementById('itr-feishu-msg');
     function saveFeishuCfg(enabled){
@@ -4399,6 +4399,12 @@ function showRoleGate() {
       if(msg) msg.textContent = '配置已保存';
     });
     document.getElementById('itr-feishu-sync').addEventListener('click', function(){
+      var token = document.getElementById('itr-feishu-token').value.trim();
+      if(!token){
+        if(msg) msg.textContent = '未填写 Access Token，尚未发起同步';
+        showToast('请先填写飞书 Access Token');
+        return;
+      }
       saveFeishuCfg(true);
       syncAllToFeishu();
       if(msg) msg.textContent = '正在同步…';
@@ -4424,7 +4430,32 @@ function showRoleGate() {
   function teacherOptions(sel){
     return getAccounts().filter(function(a){return a.role==='teacher';}).map(function(a){ return '<option value="'+escapeHtml(a.id)+'"'+(a.id===sel?' selected':'')+'>'+escapeHtml(a.username)+'</option>'; }).join('');
   }
-  function copyText(t){ try{ if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t); }catch(e){} try{ window.prompt('复制邀请码：', t); }catch(e){} }
+  function copyText(t){
+    t = String(t || '');
+    function copied(){ showToast('已复制邀请码：' + t); }
+    function fallbackCopy(){
+      var ta = document.createElement('textarea');
+      ta.value = t;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch(e) {}
+      document.body.removeChild(ta);
+      if(ok) copied();
+      else {
+        try { window.prompt('复制邀请码（请按 Ctrl/Cmd+C）：', t); } catch(e) {}
+      }
+    }
+    if(window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(copied).catch(fallbackCopy);
+    } else fallbackCopy();
+  }
   function renderAdminInvites(){
     var html='<div class="itr-adm-form"><label>生成邀请码</label><div class="itr-row">'
       + '<select id="itr-adm-inv-role"><option value="student">学生</option><option value="teacher">教师</option></select>'
