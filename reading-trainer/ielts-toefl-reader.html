@@ -4738,7 +4738,12 @@ function showRoleGate() {
     var p=document.getElementById('itr-admin-pass').value.trim();
     var admin=getAdmin(); var err=document.getElementById('itr-admin-err');
     if(!admin){ err.textContent='管理员账号未初始化'; return; }
-    if(u===admin.username && p===admin.pass){ setAdminSession({username:admin.username}); hideAdminGate(); showAdminPanel(); }
+    if(u===admin.username && p===admin.pass){
+      setAdminSession({username:admin.username});
+      var passInput=document.getElementById('itr-admin-pass');
+      if(passInput) passInput.value='';
+      hideAdminGate(); showAdminPanel();
+    }
     else { err.textContent='账号或密码错误'; }
   }
   function adminLogout(){ setAdminSession(null); hideAdminPanel(); showAdminGate(); }
