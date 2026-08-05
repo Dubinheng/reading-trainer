@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <!-- 离线优先：仅用系统字体栈（Impact / PingFang SC），不依赖任何外部 CDN，满足新世纪 UI 零依赖自包含约束 -->
+<link rel="icon" href="data:," />
 <title>New Century Reading Trainer</title>
 <style>
   /* ===== Scoped styles (prefix: #itr-app) so it can be embedded via iframe or inlined ===== */
@@ -98,6 +99,161 @@
   #itr-app .itr-primary.itr-busy { opacity: .7; pointer-events: none; }
   #itr-app .itr-ghost { background: #fff; color: var(--itr-primary-on-soft); border: 2px solid var(--itr-primary); padding: 9px 20px; }
   #itr-app .itr-ghost:hover { background: var(--itr-primary-soft); transform: translateY(-2px); }
+  /* Auth keeps its original pill treatment; authenticated app actions use compact rectangles. */
+  #itr-app[data-itr-session="1"] button.itr-btn {
+    border-radius: 12px;
+    box-shadow: 0 3px 10px rgba(16,40,60,.12);
+  }
+  #itr-app[data-itr-session="1"] {
+    --itr-bg: #E8F5FF;
+    --itr-page-start: #D7EEFF;
+    --itr-page-end: #F3FAFF;
+    background: linear-gradient(180deg, var(--itr-page-start) 0%, var(--itr-page-end) 100%);
+  }
+  #itr-app[data-itr-session="1"] .itr-primary {
+    background: linear-gradient(135deg, #0067B8 0%, #00539B 55%, #075F82 100%);
+    color: #fff;
+  }
+  #itr-app[data-itr-session="1"] .itr-primary:hover {
+    filter: brightness(1.08);
+    box-shadow: 0 7px 16px rgba(0,83,155,.28);
+  }
+  #itr-app[data-itr-session="1"] .itr-ghost {
+    background: #C7DDF0;
+    color: #00588F;
+    border-color: #6EA8D0;
+    box-shadow: 0 3px 10px rgba(0,83,155,.16);
+  }
+  #itr-app[data-itr-session="1"] .itr-ghost:hover { background: #DCEFFF; }
+  #itr-app[data-itr-session="1"] .itr-tab {
+    background: #C7DDF0;
+    color: #064D7A;
+    border-color: #6EA8D0;
+    box-shadow: 0 3px 10px rgba(0,83,155,.14);
+  }
+  #itr-app[data-itr-session="1"] .itr-tab.active {
+    background: linear-gradient(135deg, #006EB8 0%, #008AC8 100%);
+    color: #fff;
+    border-color: #006EB8;
+  }
+  #itr-app[data-itr-session="1"] .itr-tab-ghost {
+    background: transparent;
+    color: var(--itr-muted);
+    border-color: var(--itr-border);
+    box-shadow: none;
+  }
+  #itr-app[data-itr-session="1"] .itr-tc-tabs .itr-tc-tab,
+  #itr-app[data-itr-session="1"] .itr-tc-detail-tabs .itr-tc-tab {
+    background: #C7DDF0;
+    color: #064D7A;
+    border-color: #6EA8D0;
+  }
+  #itr-app[data-itr-session="1"] .itr-tc-tabs .itr-tc-tab.active,
+  #itr-app[data-itr-session="1"] .itr-tc-detail-tabs .itr-tc-tab.active {
+    background: linear-gradient(135deg, #0A7A9E 0%, #006EB8 100%);
+    color: #fff;
+    border-color: transparent;
+  }
+  #itr-app[data-itr-session="1"] .itr-btn-sm {
+    background: #C7DDF0;
+    color: #064D7A;
+    border-color: #6EA8D0;
+    box-shadow: 0 2px 8px rgba(0,83,155,.12);
+  }
+  #itr-app[data-itr-session="1"] .itr-vbtn {
+    background: #C7E9DA;
+    color: #155D3A;
+    border-color: #3DAE7A;
+  }
+  #itr-app[data-itr-session="1"] .itr-seg button,
+  #itr-app[data-itr-session="1"] .itr-chip-check,
+  #itr-app[data-itr-session="1"] .itr-tfng button {
+    background: #C7DDF0;
+    color: #064D7A;
+    border-color: #6EA8D0;
+  }
+  #itr-app[data-itr-session="1"] .itr-seg button.active,
+  #itr-app[data-itr-session="1"] .itr-chip-check:has(input:checked),
+  #itr-app[data-itr-session="1"] .itr-tfng button.sel {
+    background: #0879B8;
+    color: #fff;
+    border-color: #006EB8;
+  }
+  #itr-app[data-itr-session="1"] .itr-vbtn {
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,83,155,.10);
+  }
+  #itr-app[data-itr-session="1"] .itr-tc-tab {
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,83,155,.08);
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-primary {
+    background: var(--itr-grad-primary);
+    color: #fff;
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-ghost {
+    color: #8AC8FF;
+    border-color: #4FAAFF;
+    background: #1D3850;
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-ghost:hover { background: #284C69; }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tab {
+    background: #1D3850;
+    color: #D7E7F5;
+    border-color: #41627D;
+    box-shadow: 0 3px 10px rgba(0,0,0,.24);
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tab.active {
+    background: linear-gradient(135deg, #0A6FAE 0%, #087F9D 100%);
+    color: #fff;
+    border-color: #2AA6DE;
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tab-ghost {
+    background: transparent;
+    color: var(--itr-muted);
+    border-color: var(--itr-border);
+    box-shadow: none;
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tc-tabs .itr-tc-tab,
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tc-detail-tabs .itr-tc-tab {
+    background: #1D3850;
+    color: #D7E7F5;
+    border-color: #41627D;
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tc-tabs .itr-tc-tab.active,
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tc-detail-tabs .itr-tc-tab.active {
+    background: linear-gradient(135deg, #0A7A9E 0%, #006EB8 100%);
+    color: #fff;
+    border-color: #2AA6DE;
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-btn-sm {
+    background: #1D3850;
+    color: #D7E7F5;
+    border-color: #41627D;
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-vbtn {
+    background: #163E35;
+    border-color: #44BA83;
+    color: #9AF4C4;
+    box-shadow: 0 2px 8px rgba(0,0,0,.24);
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-seg button,
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-chip-check,
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tfng button {
+    background: #1D3850;
+    color: #D7E7F5;
+    border-color: #41627D;
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-seg button.active,
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-chip-check:has(input:checked),
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tfng button.sel {
+    background: #0A6FAE;
+    color: #fff;
+    border-color: #2AA6DE;
+  }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tc-tab {
+    box-shadow: 0 2px 8px rgba(0,0,0,.24);
+  }
   #itr-app .itr-link { background: none; border: none; color: var(--itr-primary-on-soft); cursor: pointer; font-size: 13px; padding: 4px 0; }
   #itr-app .itr-meta { font-size: 12px; color: var(--itr-muted); margin-top: 6px; }
   #itr-app details.itr-settings { margin-top: 4px; }
@@ -210,7 +366,29 @@
   /* Student & score trend */
   #itr-app .itr-stu-card { background: linear-gradient(135deg, #E8F7F0, #E4F6FA); }
   #itr-app .itr-stu-card .itr-row { align-items: center; }
+  #itr-app[data-itr-session="1"] .itr-stu-actions,
+  #itr-app[data-itr-session="1"] .itr-practice-actions { align-items: center; gap: 8px; }
+  #itr-app[data-itr-session="1"] .itr-practice-actions { margin-top: 16px; }
   #itr-app .itr-stu-hint { font-size: 12px; color: var(--itr-muted); margin-top: 8px; }
+  #itr-app .itr-custom-settings {
+    margin-top: 12px; padding: 16px; border: 1px solid var(--itr-primary); border-radius: 14px;
+    background: var(--itr-surface); box-shadow: var(--itr-shadow-1);
+  }
+  #itr-app .itr-custom-settings[hidden] { display: none; }
+  #itr-app .itr-custom-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  #itr-app .itr-custom-head h3 { margin: 0; font-size: 16px; }
+  #itr-app .itr-custom-head .itr-link { margin-left: auto; }
+  #itr-app .itr-custom-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  #itr-app .itr-custom-count { flex: 0 1 180px; min-width: 150px; }
+  #itr-app .itr-custom-types { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 10px; margin-top: 12px; }
+  #itr-app .itr-custom-type { display: flex; flex-direction: column; gap: 5px; padding: 10px; border: 1px solid var(--itr-border); border-radius: 10px; background: var(--itr-bg); }
+  #itr-app .itr-custom-type label { margin: 0; line-height: 1.35; }
+  #itr-app .itr-custom-type input[type="number"] { padding: 7px 9px; }
+  #itr-app .itr-custom-allocation { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--itr-primary-soft); color: var(--itr-primary-on-soft); font-size: 13px; line-height: 1.6; }
+  #itr-app .itr-custom-allocation-list { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  #itr-app .itr-custom-allocation-item { display: inline-flex; gap: 4px; align-items: center; padding: 3px 8px; border-radius: 8px; background: var(--itr-surface); border: 1px solid var(--itr-border); color: var(--itr-text); }
+  #itr-app .itr-custom-error { min-height: 1.4em; margin-top: 8px; color: var(--itr-red); font-size: 12px; }
+  #itr-app .itr-custom-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
   #itr-app .itr-stats-panel { background: #fff; border: 1px solid var(--itr-border); border-radius: var(--itr-radius); padding: 18px 20px; }
   #itr-app .itr-stats-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
   #itr-app .itr-stats-head h3 { margin: 0; font-size: 16px; }
@@ -379,7 +557,7 @@
 
   /* ===== Dark theme ===== */
   #itr-app[data-itr-theme="dark"] {
-    --itr-bg: #0E1B2A; --itr-surface: #15273A; --itr-border: #2A3F52; --itr-text: #E6EEF5; --itr-fg: #E6EEF5; --itr-muted: #9FB3C8;
+    --itr-bg: #0E1B2A; --itr-page-start: #0E1B2A; --itr-page-end: #13283D; --itr-surface: #15273A; --itr-border: #2A3F52; --itr-text: #E6EEF5; --itr-fg: #E6EEF5; --itr-muted: #9FB3C8;
     --itr-primary: #0089FE; --itr-primary-d: #0077E0; --itr-primary-soft: rgba(0,137,254,.18);
     --itr-green: #2CBF78; --itr-red: #FF6B6B; --itr-amber: #FBAF21;
     --itr-ielts: #2CBF78; --itr-toefl: #27BDDE; --itr-accent: #2CBF78;
@@ -439,6 +617,11 @@
     #itr-app .itr-seg { display: flex; flex-direction: column; }
     #itr-app .itr-stu-card .itr-row { flex-direction: column; align-items: stretch; }
     #itr-app .itr-stu-card .itr-row button { width: 100%; }
+    #itr-app .itr-logo-crop { width: 250px; height: 52px; flex-basis: 250px; }
+    #itr-app .itr-header-logo { width: 250px; top: -50px; }
+    #itr-app .itr-custom-types { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #itr-app .itr-custom-controls { flex-direction: column; align-items: stretch; }
+    #itr-app .itr-custom-count { width: 100%; flex-basis: auto; }
     /* 报告区移动端适配 */
     #itr-app .itr-rep-hero { flex-direction: column; text-align: center; padding: 16px; }
     #itr-app .itr-bar-row { grid-template-columns: 80px 1fr 40px; font-size: 12px; }
@@ -518,7 +701,18 @@
   /* ===== 真实品牌资产：LOGO 固定资产（data URI 内嵌）===== */
   #itr-app .itr-logo-badge { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 10px; }
   #itr-app .xsj-logo { height: 44px; width: auto; }
+  /* logo_t.png has a transparent 1536x1024 canvas; crop that canvas in a wrapper. */
+  #itr-app .itr-header > h1.itr-brand:not(.itr-brand-asset) { display: flex; }
+  #itr-app .itr-brand-asset { display: none; align-items: center; flex: 1; min-width: 0; }
+  #itr-app[data-itr-session="1"] .itr-header > h1.itr-brand:not(.itr-brand-asset) { display: none; }
+  #itr-app[data-itr-session="1"] .itr-brand-asset { display: flex; }
+  #itr-app .itr-logo-crop { position: relative; display: block; width: 300px; height: 70px; overflow: hidden; flex: 0 1 300px; }
+  #itr-app .itr-header-logo { position: absolute; display: block; width: 318px; max-width: none; height: auto; left: 0; top: -60px; }
   #itr-app .xsj-logo-sm { height: 32px; width: auto; vertical-align: middle; margin-right: 8px; }
+  @media (max-width: 640px) {
+    #itr-app .itr-logo-crop { width: 250px; height: 52px; flex-basis: 250px; }
+    #itr-app .itr-header-logo { width: 250px; top: -50px; }
+  }
   #itr-app .xsj-login-title-img { display: none; width: 100%; max-width: 160px; height: auto; margin: 0 auto 4px; }
   #itr-app[data-itr-theme="dark"] .itr-logo-badge { background: var(--itr-surface); padding: 6px 10px; border-radius: 12px; border: 1px solid var(--itr-border); }
   #itr-app .itr-mascot-wrap { position: absolute; bottom: 8px; right: 14px; z-index: 2; pointer-events: none; filter: drop-shadow(0 2px 8px rgba(16,40,60,.10)); animation: xsjBounce 3s ease-in-out infinite; width: 80px; height: auto; opacity: .85; }
@@ -1007,7 +1201,7 @@
   .itr-tc-panel { display: none; }
   .itr-tc-panel.active { display: block; animation: itr-fade-up .25s ease both; }
 
-  /* ===== 文章库增强（教师录入+分级）===== */
+  /* ===== 文章资源增强（教师录入+分级）===== */
   .itr-lib-form { margin-bottom: 16px; }
   .itr-lib-form .itr-row { align-items: flex-end; }
   .itr-lib-item {
@@ -1060,6 +1254,8 @@
   #itr-app .itr-tc-tabs { display:flex; gap:8px; margin:6px 0 14px; flex-wrap:wrap; }
   #itr-app .itr-tc-tabs .itr-tc-tab { padding:8px 16px; border:1px solid var(--itr-border); border-radius:999px; background:var(--itr-card); color:var(--itr-fg); cursor:pointer; font-size:13px; }
   #itr-app .itr-tc-tabs .itr-tc-tab.active { background:linear-gradient(135deg,#2CBF78,#0089FE); color:#fff; border-color:transparent; font-weight:700; }
+  #itr-app[data-itr-session="1"] .itr-tc-tabs .itr-tc-tab { border-radius:10px; box-shadow:0 2px 8px rgba(0,83,155,.08); }
+  #itr-app[data-itr-theme="dark"][data-itr-session="1"] .itr-tc-tabs .itr-tc-tab { box-shadow:0 2px 8px rgba(0,0,0,.24); }
   #itr-app .itr-tc-panel { display:none; }
   #itr-app .itr-tc-panel.active { display:block; }
   #itr-app .itr-ai-note { font-size:13px; color:var(--itr-muted); background:var(--itr-fill); border:1px dashed var(--itr-border); border-radius:10px; padding:10px 12px; }
@@ -1082,6 +1278,8 @@
 <div id="itr-app">
   <div class="itr-header">
     <h1 class="itr-brand"><img class="xsj-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAApkAAAKZCAMAAADEccBgAAADAFBMVEVMaXH///////////////////////////////////////////////////////////////8js5QcqKweq6UktJEks5MNkd4ltY8QldUlto0mt4smt4oLjuQnuIgTm8kOktsouoQktJIrvnsTmsopu4IltZAdqakpvIAMkOEmtowMj+IRltIXoL0PlNcnuIkqvX4VnsIYorknuYcPk9kLjeYJi+sSmM4KjecYoboOktwKjOgXobwRl9EouoMWn8AVncMrv3ohr5wPlNgisJkSmc0pvH8Zo7YhsJsTmssfrKMswHcgrp8apLQfraEapbIOk9oLjuUcp60Iie8qvX0isZgjspUbprAKi+oSmM8Rl9AXn78MkOAKjOkIifAWnsEVnMUVncQMj+MUnMYZorgouYYgraAIiu4Zo7cdqqgrv3kHiPIhr50dqaobprEgrp4frKIJiu0QldYapbMeqqYUm8cbp64Ji+wOkt0rvnwPk9oYobsNkd8Hh/MltY4ktJAjspYlto4UnMcNkN8mt4wsv3gnuIcouYUQltMeqqcnuYYTmcwouoUhsJoXoL4QltQZpLUpu4MfrKQpu4EisZcpvIEGh/QqvX8bp68qvnwNkd3B4f0PlNYGh/YjspcRltMWn78JiuwapLVg0Jkbpq8IiPEHiPEMjuTy+/nw+f3S6/nD5PjJ7eJKr+Hh8f3F5++r4dyQ182Kz+BzzMSHyuri8/nj9fRSusiV372DxPiN09fG6es2pt5rv+BFpvTV7/Avt5yl2O9nxMtuzrdIvLNltvPX8um55uG24O2B0slOxKGu5tFExY44q9CTzPh6xuKy2/hbuN6o2+hOtdOk1vMrsalZxbItrLlUrvU9u6Sh4co4tLI2n/Ki0/pFtsCd29gzu5GS28a869eX0up0vfWF170lp7/k9/BRypVy1KgmmPIVjvUfntIXke+I27Pl9+4qnuIYlOghoc0dm9k2wYYjo8cgn88al+Q1v4o3xIAfndUem9ccmdwbl+EcmN4cmOQdl+jMceF7AAAAEHRSTlMA0OBg8MCggBBAIDBwULCQeDcTDwAAAAlwSFlzAAAsSgAALEoBd3p0TQAAIABJREFUeJztnXmYXFWVwKurq7qqen0kyL4pGpBFiOyL7LLI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" alt="New Century Reading Trainer" loading="lazy"></h1>
+    <h1 class="itr-brand"><img class="xsj-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAApkAAAKZCAMAAADEccBgAAADAFBMVEVMaXH///////////////////////////////////////////////////////////////8js5QcqKweq6UktJEks5MNkd4ltY8QldUlto0mt4smt4oLjuQnuIgTm8kOktsouoQktJIrvnsTmsopu4IltZAdqakpvIAMkOEmtowMj+IRltIXoL0PlNcnuIkqvX4VnsIYorknuYcPk9kLjeYJi+sSmM4KjecYoboOktwKjOgXobwRl9EouoMWn8AVncMrv3ohr5wPlNgisJkSmc0pvH8Zo7YhsJsTmssfrKMswHcgrp8apLQfraEapbIOk9oLjuUcp60Iie8qvX0isZgjspUbprAKi+oSmM8Rl9AXn78MkOAKjOkIifAWnsEVnMUVncQMj+MUnMYZorgouYYgraAIiu4Zo7cdqqgrv3kHiPIhr50dqaobprEgrp4frKIJiu0QldYapbMeqqYUm8cbp64Ji+wOkt0rvnwPk9oYobsNkd8Hh/MltY4ktJAjspYlto4UnMcNkN8mt4wsv3gnuIcouYUQltMeqqcnuYYTmcwouoUhsJoXoL4QltQZpLUpu4MfrKQpu4EisZcpvIEGh/QqvX8bp68qvnwNkd3B4f0PlNYGh/YjspcRltMWn78JiuwapLVg0Jkbpq8IiPEHiPEMjuTy+/nw+f3S6/nD5PjJ7eJKr+Hh8f3F5++r4dyQ182Kz+BzzMSHyuri8/nj9fRSusiV372DxPiN09fG6es2pt5rv+BFpvTV7/Avt5yl2O9nxMtuzrdIvLNltvPX8um55uG24O2B0slOxKGu5tFExY44q9CTzPh6xuKy2/hbuN6o2+hOtdOk1vMrsalZxbItrLlUrvU9u6Sh4co4tLI2n/Ki0/pFtsCd29gzu5GS28a869eX0up0vfWF170lp7/k9/BRypVy1KgmmPIVjvUfntIXke+I27Pl9+4qnuIYlOghoc0dm9k2wYYjo8cgn88al+Q1v4o3xIAfndUem9ccmdwbl+EcmN4cmOQdl+jMceF7AAAAEHRSTlMA0OBg8MCggBBAIDBwULCQeDcTDwAAAAlwSFlzAAAsSgAALEoBd3p0TQAAIABJREFUeJztnXmYXFWVwKurq7qqen0kyL4pGpBFiOyL7LLIImCAIDvIIvsSUBGH0XGUYVhEh3HctdV53am2O73TC+nN7k4vhk5MmiSYhMRsGBLAsCg63zdfdaW6tlfV9e67971zzj2/f4PWe69/3733LPdeH2OfSCRSEQqFQpXBGEVGNv6pfwnG/qPiSCQS5o/MqCIciZSHqqw9LAR/MFgVKmdJGVmURspDJUG/oI9W+IOVofJIGf+FGDFKI6EqqUZm4g9WhVhQxgZlFaFK0UnbPkWVoQr2k8lPOFJeEnTNyVSKSkK8BGWsCEdClSrn7kLwV7KeTCpl5SVeS5nEX1ke4b8OE64IeTN95ydYVcGDp76EK6rcC3TsU1RSXKr7n0hDgFuZwF/CY6dOREIYrExQVFWh+x9MC0qLKwMwjLNDZTlP7KSJoJjCrfHz0EmUcEUJwsEyjUBlMa86iREurgRkmBOCPK/TobQcYspSnCKWkwLhYrxLy9ywnMihM4lnU8RrTrRU0NUyTmWx7n9ijJShj8QLIVDC3R+oCJfD6R1SjT/ES04skJ/FMwnyrI6A0pA+w2WSQBUPnLDRbrhMwgMnXMJaDpdJArziBElZCRRDPIRDdXAU0ypAilPEkzogdEoSzUwgxMUhGJRW6ZBTt0UJLzi9p5SXl1bwgtNjIry8zEWQ3fQO9jIvHAx5BHs5I352031INgTLh910mQiniQqF3XQRnsdtwW66BHtpGz…3045 tokens truncated…vjLS4Ne4cca4Dn3aRYvWaHYzPe6UQyXsb1oOogJ9F5fS4aaVqgzc2IY4BtbQzSNmQ34xGYKQ00rFJj5TvcyBEFPgnJoAqkDRYg+TeeSAalmji/FM1qSzxZlUoYjDpqmtaFpjRQz351YhiPkmYZ6tiiTMNw9lbmI2enIzPHujaAbLy3RIihPB0uInobZ2dG3RsDM8eWNw4gWlknIdWMWAqY4KJ3Oho62tQWaOb68cWM9SikNvWKfVHDFQVmYnUMdHX1tbZMWZm5ua+trbByuR7amzCBQAUcWd0FSDyqEzs7Ozvo4aAfITIo0i33SQLnY1ARN6j65wLvYpA7CA9jlUgbysn7tCaC65EcNCDOb9ClCc1+fUvB0eOgCgsvK3SGCO31EDX2TRdnwjA4InsnT4BkdCjyTZxDhGB0CPJNnA/kAWG0I6p1dz0U5B0Ieo312PRfY+omJQX/jrgM4EPKOKp7J88GBkEdwOXImwsDP2SSK5o1FhcHDputwrqgweNh0GR4wC4aHTRfhAdMOPGy6Bg+YNuFh0xX8PGDah3Ob6uEcphBl3BunliLOYYrClXSFBLhK7oAwb/tVRZAbhJ3BkZASOPKRQIindOmEOPKRAU/pkuGJXBoRbtyUh58jcpnAvxgQCQFNDx5UR5iXmzLg1LoCSnm56RReYCqCi0KOCPICUx0cCgnj1+ryFA8o5sy7CHpd6uMR7KZtApxZdwUO0+3BXroHu1k47KW7sJuFwV66D7s5M+ylN4TLORbKB3vpIRyn58TPXnpLMefereC8OgAiXLPMJMgd6zDgXo80Srg+DgcO1BMEqrifCBi84JxaXnLYA5Ay3Sf1Sp7GoaJzhtMf4mkcNBV6Xt5SydE4fPQbOHm4REOkRKNQvYSHS0yEi/XIvxdxMI6PUvKzup9zl1gpq6IrZ6CErzxDTRnJJWeAF5cUqCAmJ2tJCDrTup+1pEZZCH9h3V/Fa0uSlBZjLhAFyzkSp0wFynndX1LBeUv6lJZXogqJKst5DteHshCOGlEwxJ1t+hEBbidbqTMRmDN7gK1kYiF7FaSEUlFJMa8rmWki5SXe6+mv5KGSsSJSXuLV0jNYUs5SMnkprQhVujl8FlWGKnj6ZgqlNBKqCqpNygeCJaEIO8kIURYJhYKyZ/hgMBSK8NzNyKAsUhxT1MksXxQTspgHSUYR4UgkEgrFNA3OMJhO/Rex/zQSiXDVm/GEskgSHhSd4/P5/h/T0mkRerxjRgAAAABJRU5ErkJggg==" alt="New Century Reading Trainer" loading="lazy"></h1>
+        <h1 class="itr-brand itr-brand-asset"><span class="itr-logo-crop"><img class="itr-header-logo" src="assets/logo_t.png" alt="新世纪 reading trainer" loading="eager"></span></h1>
     <span class="itr-role-badge" id="itr-role-badge"></span>
     <button type="button" class="itr-btn itr-ghost itr-theme-btn itr-no-print" id="itr-theme-btn" title="切换深色 / 浅色"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg> 主题</button>
   </div>
@@ -1306,7 +1504,7 @@
     <div class="itr-tc-tabs" id="tc-tabs">
       <button class="itr-tc-tab active" data-tc="students">学生管理</button>
       <button class="itr-tc-tab" data-tc="invites">邀请码</button>
-      <button class="itr-tc-tab" data-tc="library">文章库</button>
+      <button class="itr-tc-tab" data-tc="library">文章资源</button>
     </div>
 
     <div class="itr-tc-panel active" id="tc-panel-students">
@@ -1314,9 +1512,9 @@
       <p id="tc-no-students" style="display:none;text-align:center;color:var(--itr-muted);padding:30px;font-size:14px;">暂无学生，生成邀请码让学生注册后即可在此管理。</p>
       <div class="itr-tc-detail" id="tc-student-detail" style="display:none;">
         <div class="itr-tc-detail-tabs" id="tc-detail-tabs">
-          <button class="itr-tc-tab active" data-tc-tab="tc-score">成绩趋势</button>
-          <button class="itr-tc-tab" data-tc-tab="tc-wrong">错题本</button>
-          <button class="itr-tc-tab" data-tc-tab="tc-vocab">生词本</button>
+          <button class="itr-tc-tab active" data-tc-tab="tc-score">成绩档案</button>
+          <button class="itr-tc-tab" data-tc-tab="tc-wrong">错题复习</button>
+          <button class="itr-tc-tab" data-tc-tab="tc-vocab">词汇复习</button>
         </div>
         <div class="itr-tc-panel active" id="tc-panel-score"></div>
         <div class="itr-tc-panel" id="tc-panel-wrong"></div>
@@ -1333,13 +1531,13 @@
   <!-- Student & score tracking -->
   <div class="itr-card itr-stu-card">
     <label><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> 选择学生（按班级分组，可多选 / 一键全部）</label>
-    <div class="itr-row">
+    <div class="itr-row itr-stu-actions" id="itr-stu-actions">
       <button class="itr-btn itr-ghost" id="itr-stu-all" type="button">一键全部</button>
-      <button class="itr-btn itr-ghost" id="itr-stu-clear" type="button">清空选择</button>
-      <button class="itr-btn itr-ghost" id="itr-stats-btn" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 7l-9.5 9.5-5-5L2 17"/><path d="M16 7h6v6"/></svg> 成绩趋势</button>
-      <button class="itr-btn itr-ghost" id="itr-smart" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.2 6.3L21 11l-6.8 1.7L12 19l-2.2-6.3L3 11l6.8-1.7z"/></svg> 智能练习</button>
+      <button class="itr-btn itr-ghost" id="itr-stu-clear" type="button">取消选择</button>
+      <button class="itr-btn itr-ghost" id="itr-smart" type="button" aria-expanded="false" aria-controls="itr-custom-settings"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.2 6.3L21 11l-6.8 1.7L12 19l-2.2-6.3L3 11l6.8-1.7z"/></svg> 练习设定</button>
       <button class="itr-btn itr-ghost" id="itr-remind" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg> 复习提醒</button>
     </div>
+    <div id="itr-custom-settings" class="itr-custom-settings" hidden></div>
     <div id="itr-student-selector"></div>
     <div class="itr-stu-hint" id="itr-stu-hint">请选择要练习的学生。教师可选择一个或多个学生生成题卡，成绩会分别计入各自名下。</div>
   </div>
@@ -1395,8 +1593,8 @@
 
       <div class="itr-row" style="margin-top:12px;">
         <div class="itr-field" style="min-width:140px;">
-          <label for="itr-count">题目数量（1–30）</label>
-          <input type="number" id="itr-count" value="6" min="1" max="30" />
+          <label for="itr-count">题目数量（1–20）</label>
+          <input type="number" id="itr-count" value="6" min="1" max="20" />
         </div>
         <div class="itr-field">
           <label for="itr-artmode">文章模式</label>
@@ -1436,20 +1634,17 @@
   </details>
 
   <!-- Input -->
-  <div class="itr-card">
+  <div class="itr-card" id="itr-input-card">
     <label for="itr-input">英语文章</label>
     <textarea id="itr-input" placeholder="在此粘贴或输入英文文章（建议每篇 150–600 词）。&#10;&#10;单篇：直接粘贴。&#10;多篇：每篇文章之间用单独一行的「====」分隔，例如：&#10;  Article One ...&#10;  ====&#10;  Article Two ..."></textarea>
     <div class="itr-meta"><span id="itr-wc">0</span> 词 · 检测难度：<span id="itr-diff">—</span> · 文章篇数：<span id="itr-artcount">1</span></div>
-    <div class="itr-btns">
+    <div class="itr-btns itr-practice-actions" id="itr-practice-actions">
       <button class="itr-btn itr-primary" id="itr-generate" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-12h-7z"/></svg> 一键生成试题</button>
       <button class="itr-btn itr-ghost" id="itr-sample" type="button">载入示例</button>
-      <button class="itr-btn itr-ghost" id="itr-clear" type="button">清空</button>
-      <button class="itr-btn itr-ghost" id="itr-lib-btn" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h7a3 3 0 0 1 3 3v13a3 3 0 0 0-3-3H3z"/><path d="M21 4h-7a3 3 0 0 0-3 3v13a3 3 0 0 1 3-3h7z"/></svg> 文章库</button>
+      <button class="itr-btn itr-ghost" id="itr-custom-generate" type="button" aria-expanded="false" aria-controls="itr-custom-settings"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.2 6.3L21 11l-6.8 1.7L12 19l-2.2-6.3L3 11l6.8-1.7z"/></svg> 选项生成试题</button>
       <button class="itr-btn itr-ghost" id="itr-vocab-btn" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z"/><path d="M20 5h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/></svg> 生词提取</button>
-      <button class="itr-btn itr-ghost" id="itr-add-sel-vocab" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> 添加选中词</button>
-      <button class="itr-btn itr-ghost" id="itr-fav-btn" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.6 5.6 6.4.8-4.7 4.4 1.2 6.3L12 17.8 6.5 20.1 7.7 13.8 3 9.4l6.4-.8z"/></svg> 收藏当前文章</button>
-      <button class="itr-btn itr-ghost" id="itr-vbook-btn" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg> 生词本</button>
-      <button class="itr-btn itr-ghost" id="itr-wbook-btn" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/></svg> 错题本</button>
+      <button class="itr-btn itr-ghost" id="itr-add-sel-vocab" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> 添加生词</button>
+      <button class="itr-btn itr-ghost" id="itr-fav-btn" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.6 5.6 6.4.8-4.7 4.4 1.2 6.3L12 17.8 6.5 20.1 7.7 13.8 3 9.4l6.4-.8z"/></svg> 收藏</button>
     </div>
     <label class="itr-vocab-ai" id="itr-vocab-ai-wrap" style="display:none;margin-top:10px;font-size:13px;color:var(--itr-muted);">
       <input type="checkbox" id="itr-vocab-ai" /> 用 AI 接口补全释义（需已配置 API，更准确）
@@ -1811,7 +2006,7 @@
       if (s.level) $("itr-level").value = String(s.level);
       if (s.exam) $("itr-exam").value = s.exam;
       if (s.outmode) setOutMode(s.outmode);
-      if (s.count) $("itr-count").value = s.count;
+      if (s.count) $("itr-count").value = String(Math.max(1, Math.min(20, parseInt(s.count, 10) || 6)));
       if (s.artmode) setArtMode(s.artmode);
       if (s.showarticle) $("itr-showarticle").value = s.showarticle;
       if (s.withkey) $("itr-withkey").value = s.withkey;
@@ -1821,6 +2016,7 @@
       if (s.qtypes && Array.isArray(s.qtypes)) {
         document.querySelectorAll('.itr-qtype').forEach(function (b) { b.checked = s.qtypes.indexOf(b.value) !== -1; });
       }
+      if (s.customWeights && typeof s.customWeights === "object") activeCustomWeights = s.customWeights;
     } catch (e) {}
   }
   function saveSettings() {
@@ -1831,6 +2027,8 @@
       theme: ($("itr-app").getAttribute("data-itr-theme") === "dark") ? "dark" : "light",
       adapt: $("itr-adapt") ? $("itr-adapt").checked : false,
       qtypes: getSelectedQuestionTypes(),
+      customWeights: activeCustomWeights || null,
+      customCount: $("itr-custom-count") ? $("itr-custom-count").value : ((loadSettingsRaw() || {}).customCount || "6"),
       role: (currentRole || (loadSettingsRaw() || {}).role || ""),
       feishu: (loadSettingsRaw() || {}).feishu
     };
@@ -1990,22 +2188,98 @@
     "diagram": "diagram(流程图/图表填空，steps 为按序的填空步骤)",
     "sentence-end": "sentence-end(句尾配对，beginnings 与前半句、endings 与结尾配对)"
   };
+  /* The panel uses friendly labels while retaining the app's existing canonical type IDs. */
+  var CUSTOM_TYPE_OPTIONS = [
+    { value: "multiple-choice", label: "单选 / 多选（single / multiple choice）" },
+    { value: "true-false-notgiven", label: "判断（true / false / not given）" },
+    { value: "fill-blank", label: "句子插入 / 填空（sentence insertion）" },
+    { value: "matching", label: "细节匹配（detail matching）" },
+    { value: "headings", label: "段落总结（paragraph summary）" },
+    { value: "diagram", label: "流程图（diagram）" },
+    { value: "sentence-end", label: "句尾配对（sentence ending）" },
+    { value: "vocabulary", label: "同义替换 / 语境词汇（synonym / vocabulary in context）" }
+  ];
+  var activeCustomWeights = null;
+  function clampQuestionCount(value, fallback) {
+    var n = parseInt(value, 10);
+    if (!isFinite(n)) n = fallback || 6;
+    return Math.max(1, Math.min(20, n));
+  }
+  function canonicalQuestionTypes(types) {
+    var source = Array.isArray(types) ? types : Object.keys(QTYPE_LABELS);
+    var out = [];
+    source.forEach(function (t) {
+      var type = normType(t);
+      if (QTYPE_LABELS[type] && out.indexOf(type) === -1) out.push(type);
+    });
+    return out.length ? out : Object.keys(QTYPE_LABELS);
+  }
+  function sanitizeCustomWeights(weights) {
+    var out = {};
+    CUSTOM_TYPE_OPTIONS.forEach(function (opt) {
+      var value = weights && weights[opt.value] != null ? Number(weights[opt.value]) : 0;
+      out[opt.value] = isFinite(value) && value >= 0 ? value : 0;
+    });
+    return out;
+  }
+  /* Largest-remainder allocation keeps the requested total exact after normalizing weights. */
+  function normalizeQuestionAllocation(count, types, weights) {
+    var total = clampQuestionCount(count, 6);
+    var selected = canonicalQuestionTypes(types);
+    var safeWeights = weights ? sanitizeCustomWeights(weights) : {};
+    var weightTotal = selected.reduce(function (sum, type) {
+      var value = weights ? Number(safeWeights[type]) : 1;
+      return sum + (isFinite(value) && value > 0 ? value : 0);
+    }, 0);
+    if (!(weightTotal > 0)) return null;
+    var allocation = {}, remainders = [], used = 0;
+    selected.forEach(function (type, index) {
+      var weight = weights ? Number(safeWeights[type]) : 1;
+      var exact = weight > 0 ? total * weight / weightTotal : 0;
+      var base = Math.floor(exact);
+      allocation[type] = base;
+      used += base;
+      remainders.push({ type: type, fraction: exact - base, index: index });
+    });
+    remainders.sort(function (a, b) { return b.fraction - a.fraction || a.index - b.index; });
+    for (var i = 0; i < total - used; i++) allocation[remainders[i % remainders.length].type]++;
+    return allocation;
+  }
+  function getGenerationAllocation(count, types) {
+    var selected = canonicalQuestionTypes(types);
+    if (activeCustomWeights) {
+      var custom = normalizeQuestionAllocation(count, selected, activeCustomWeights);
+      if (custom) return custom;
+    }
+    return normalizeQuestionAllocation(count, selected);
+  }
+  function allocationTotal(allocation) {
+    return Object.keys(allocation || {}).reduce(function (sum, type) { return sum + (parseInt(allocation[type], 10) || 0); }, 0);
+  }
+  function customTypeLabel(type) {
+    for (var i = 0; i < CUSTOM_TYPE_OPTIONS.length; i++) if (CUSTOM_TYPE_OPTIONS[i].value === type) return CUSTOM_TYPE_OPTIONS[i].label;
+    return typeLabel(type);
+  }
   function getSelectedQuestionTypes() {
     var boxes = document.querySelectorAll('.itr-qtype');
     var out = [];
     boxes.forEach(function (b) { if (b.checked) out.push(b.value); });
     return out.length ? out : Object.keys(QTYPE_LABELS);
   }
-  function buildPrompt(article, count, exam, level, types) {
+  function buildPrompt(article, count, exam, level, types, allocation) {
     var examText = exam === "both" ? "雅思(IELTS)和托福(TOEFL)" : (exam === "IELTS" ? "雅思(IELTS)" : "托福(TOEFL)");
-    var typeList = (types && types.length ? types : Object.keys(QTYPE_LABELS)).map(function (t) { return QTYPE_LABELS[t] || t; }).join("、");
+    var selectedTypes = canonicalQuestionTypes(types);
+    var exactAllocation = allocation || getGenerationAllocation(count, selectedTypes);
+    var typeList = selectedTypes.map(function (t) { return QTYPE_LABELS[t] || t; }).join("、");
+    var allocationText = selectedTypes.map(function (t) { return (QTYPE_LABELS[t] || t) + " = " + (exactAllocation && exactAllocation[t] != null ? exactAllocation[t] : 0) + " 道"; }).join("、");
     return "你是一位资深的雅思与托福阅读出题专家。请根据下面提供的英文文章，生成 " + count + " 道" + examText + "风格的阅读理解题。\n\n" +
       "【目标难度级别】" + level.name + "。\n" + level.api + "\n\n" +
       "要求：\n" +
       "1. 只能从以下指定题型中选择生成（禁止出现未指定的题型）：" + typeList + "。\n" +
-      "2. 每题必须紧扣文章事实，答案唯一且可在原文中找到依据；难度须符合上述目标级别。\n" +
-      "3. 每题附带正确答案(correct answer)与简要解析(explanation，说明依据来自文章哪部分)。\n" +
-      "4. 题干与选项使用英文，解析可使用中文或英文。\n\n" +
+      "2. 必须严格按以下题型数量生成（不得增减或用其他题型替代；合计 " + allocationTotal(exactAllocation) + " 道）：" + allocationText + "。\n" +
+      "3. 每题必须紧扣文章事实，答案唯一且可在原文中找到依据；难度须符合上述目标级别。\n" +
+      "4. 每题附带正确答案(correct answer)与简要解析(explanation，说明依据来自文章哪部分)。\n" +
+      "5. 题干与选项使用英文，解析可使用中文或英文。\n\n" +
       "请严格只返回一个 JSON 对象（不要包含 markdown 代码块标记）：\n" +
       "{\n  \"questions\": [\n" +
       "  {\"type\":\"multiple-choice\",\"exam\":\"IELTS\",\"prompt\":\"问题(英文)\",\"options\":[{\"label\":\"A\",\"text\":\"...\"}],\"answer\":\"B\",\"explanation\":\"解析\"},\n" +
@@ -2019,6 +2293,111 @@
       "  ]\n}\n\n文章如下：\n\"\"\"\n" + article + "\n\"\"\"";
   }
 
+  function customSettingsMarkup() {
+    var typeHtml = CUSTOM_TYPE_OPTIONS.map(function (opt) {
+      return '<div class="itr-custom-type"><label for="itr-custom-weight-' + opt.value + '">' + escapeHtml(opt.label) + '</label>' +
+        '<input type="number" id="itr-custom-weight-' + opt.value + '" data-custom-weight="' + opt.value + '" min="0" max="100" step="1" inputmode="numeric" aria-label="' + escapeHtml(opt.label) + '权重" /></div>';
+    }).join("");
+    return '<div class="itr-custom-head"><h3>自定义出题设置</h3><button type="button" class="itr-link" id="itr-custom-close">收起设置</button></div>' +
+      '<div class="itr-custom-controls"><div class="itr-field itr-custom-count"><label for="itr-custom-count">题目总数（1–20）</label><input type="number" id="itr-custom-count" min="1" max="20" step="1" value="6" inputmode="numeric" /></div>' +
+      '<div class="itr-hint" style="margin:0;flex:1 1 280px;">填写每类权重（0 表示不生成），系统会按最大余数法归一化为整数题数。</div></div>' +
+      '<div class="itr-custom-types" role="group" aria-label="题型权重设置">' + typeHtml + '</div>' +
+      '<div class="itr-custom-allocation" id="itr-custom-allocation" aria-live="polite"></div>' +
+      '<div class="itr-custom-error" id="itr-custom-error" role="alert"></div>' +
+      '<div class="itr-custom-actions"><button type="button" class="itr-btn itr-primary" id="itr-custom-apply">生成</button><span class="itr-hint" style="margin:0;">生成会应用本次总数与题型比例。</span></div>';
+  }
+  function readCustomSettings(panel) {
+    var countEl = panel.querySelector("#itr-custom-count");
+    var countRaw = countEl ? String(countEl.value).trim() : "";
+    if (!/^\d+$/.test(countRaw) || clampQuestionCount(countRaw, 0) !== Number(countRaw) || Number(countRaw) < 1 || Number(countRaw) > 20) {
+      return { error: "题目总数必须是 1–20 的整数。" };
+    }
+    var weights = {}, invalid = false;
+    panel.querySelectorAll("[data-custom-weight]").forEach(function (input) {
+      var raw = String(input.value).trim();
+      var value = raw === "" ? NaN : Number(raw);
+      if (!isFinite(value) || value < 0 || value > 100) invalid = true;
+      weights[input.getAttribute("data-custom-weight")] = value;
+    });
+    if (invalid) return { error: "每项权重必须是 0–100 的数字。" };
+    var safe = sanitizeCustomWeights(weights);
+    var selected = CUSTOM_TYPE_OPTIONS.map(function (opt) { return opt.value; }).filter(function (type) { return safe[type] > 0; });
+    if (!selected.length || selected.reduce(function (sum, type) { return sum + safe[type]; }, 0) <= 0) {
+      return { error: "题型权重总和必须大于 0，请至少填写一项正数权重。" };
+    }
+    return { count: Number(countRaw), weights: safe, selected: selected };
+  }
+  function renderCustomAllocation(panel) {
+    var result = readCustomSettings(panel);
+    var allocationEl = panel.querySelector("#itr-custom-allocation");
+    var errorEl = panel.querySelector("#itr-custom-error");
+    if (errorEl) errorEl.textContent = result.error || "";
+    if (!allocationEl) return result;
+    if (result.error) {
+      allocationEl.textContent = "暂时无法计算题型分配，请修正上方设置。";
+      return result;
+    }
+    var allocation = normalizeQuestionAllocation(result.count, result.selected, result.weights);
+    var total = allocationTotal(allocation);
+    allocationEl.innerHTML = '<strong>本次分配（合计 ' + total + ' / ' + result.count + ' 道）</strong><div class="itr-custom-allocation-list">' +
+      CUSTOM_TYPE_OPTIONS.map(function (opt) {
+        return '<span class="itr-custom-allocation-item"><span>' + escapeHtml(customTypeLabel(opt.value)) + '</span><b>' + (allocation[opt.value] || 0) + ' 道</b></span>';
+      }).join("") + '</div>';
+    panel._customAllocation = allocation;
+    return result;
+  }
+  function populateCustomSettings(panel) {
+    var saved = activeCustomWeights || (loadSettingsRaw() || {}).customWeights;
+    var hasSaved = saved && typeof saved === "object";
+    var weights = hasSaved ? sanitizeCustomWeights(saved) : null;
+    panel.querySelectorAll("[data-custom-weight]").forEach(function (input) {
+      var type = input.getAttribute("data-custom-weight");
+      input.value = weights ? String(weights[type]) : "1";
+    });
+    var settings = loadSettingsRaw() || {};
+    var count = settings.customCount || (activeCustomWeights ? $("itr-count").value : "6");
+    panel.querySelector("#itr-custom-count").value = String(clampQuestionCount(count, 6));
+    renderCustomAllocation(panel);
+  }
+  function closeCustomSettings() {
+    var panel = $("itr-custom-settings");
+    if (panel) panel.hidden = true;
+    document.querySelectorAll('[aria-controls="itr-custom-settings"]').forEach(function (button) { button.setAttribute("aria-expanded", "false"); });
+  }
+  function ensureCustomSettingsPanel() {
+    var panel = $("itr-custom-settings");
+    if (!panel) return null;
+    if (panel.getAttribute("data-ready") === "1") return panel;
+    panel.innerHTML = customSettingsMarkup();
+    panel.setAttribute("data-ready", "1");
+    panel.querySelectorAll("[data-custom-weight]").forEach(function (input) { input.addEventListener("input", function () { renderCustomAllocation(panel); }); });
+    panel.querySelector("#itr-custom-count").addEventListener("input", function () { renderCustomAllocation(panel); });
+    panel.querySelector("#itr-custom-close").addEventListener("click", closeCustomSettings);
+    panel.querySelector("#itr-custom-apply").addEventListener("click", function () {
+      var result = renderCustomAllocation(panel);
+      if (result.error) return;
+      activeCustomWeights = result.weights;
+      $("itr-count").value = String(result.count);
+      document.querySelectorAll(".itr-qtype").forEach(function (box) { box.checked = result.weights[box.value] > 0; });
+      saveSettings();
+      doGenerate();
+    });
+    populateCustomSettings(panel);
+    return panel;
+  }
+  function openCustomSettings(trigger) {
+    var panel = ensureCustomSettingsPanel();
+    if (!panel || !trigger) return;
+    if (!panel.hidden && panel._customSource === trigger.id) { closeCustomSettings(); return; }
+    var anchor = trigger.id === "itr-smart" ? $("itr-stu-actions") : $("itr-practice-actions");
+    if (!anchor || !anchor.parentNode) return;
+    anchor.parentNode.insertBefore(panel, anchor.nextSibling);
+    panel.hidden = false;
+    panel._customSource = trigger.id;
+    document.querySelectorAll('[aria-controls="itr-custom-settings"]').forEach(function (button) { button.setAttribute("aria-expanded", button === trigger ? "true" : "false"); });
+    populateCustomSettings(panel);
+  }
+
   function extractJSON(text) {
     text = text.trim();
     var fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -2029,7 +2408,7 @@
     return JSON.parse(text);
   }
 
-  function apiGenerate(article, count, exam, level, types) {
+  function apiGenerate(article, count, exam, level, types, allocation) {
     var st = getAISettings();
     if (!st || !st.enabled || !st.endpoint || !st.key) throw new Error("AI 接口尚未由管理员配置，请在「管理者后台 → AI 接口」中设置并保存。");
     var endpoint = validateEndpoint(st.endpoint.trim());
@@ -2039,7 +2418,7 @@
       model: model,
       messages: [
         { role: "system", content: "You are an expert IELTS/TOEFL reading trainer designer. Always respond with valid JSON only." },
-        { role: "user", content: buildPrompt(article, count, exam, level, types) }
+        { role: "user", content: buildPrompt(article, count, exam, level, types, allocation) }
       ],
       temperature: 0.4
     };
@@ -2449,9 +2828,9 @@
       h += '</ul>';
     }
     if (unanswered > 0) h += '<div style="margin-top:6px;">有 ' + unanswered + ' 题未作答——考试中即使不确定也应先猜一个答案，避免白丢分。</div>';
-    if (wrongs.length) h += '<div style="margin-top:6px;">' + ICONS.clip + ' 本次 ' + wrongs.length + ' 道错题已自动存入「' + ICONS.clip + ' 错题本」，点下方按钮可随时重做巩固（连续答对 5 次即移出）。</div>';
+    if (wrongs.length) h += '<div style="margin-top:6px;">' + ICONS.clip + ' 本次 ' + wrongs.length + ' 道错题已自动存入「' + ICONS.clip + ' 错题记录」，点下方按钮可随时重做巩固（连续答对 5 次即移出）。</div>';
     var stuLabel = (targetIds.length > 1) ? (targetIds.length + " 名学生") : (escapeHtml(stu.name) + "（" + stu.id + "）");
-    h += '<div style="margin-top:6px;">' + ICONS.trend + ' 本次成绩已计入「' + stuLabel + '」的成绩档案。点顶部「' + ICONS.trend + ' 成绩趋势」可查看独立曲线。</div>';
+    h += '<div style="margin-top:6px;">' + ICONS.trend + ' 本次成绩已计入「' + stuLabel + '」的成绩档案。点顶部「' + ICONS.trend + ' 成绩档案」可查看独立曲线。</div>';
     if (adaptNote) h += adaptNote;
     h += '</div>';
 
@@ -2636,7 +3015,7 @@
             '</div>';
         }
         inner += '<div class="itr-chart">' + drawLineChart([{ label: stu.name, color: PALETTE[0], records: grades }], "pct") + '</div>';
-        inner += '<div class="itr-stu-hint">横轴为练习次序（#1、#2…），纵轴为正确率。数据按学生隔离保存在本地浏览器，可在「' + ICONS.trend + ' 成绩趋势」中查看分组与导出。</div>';
+        inner += '<div class="itr-stu-hint">横轴为练习次序（#1、#2…），纵轴为正确率。数据按学生隔离保存在本地浏览器，可在「' + ICONS.trend + ' 成绩档案」中查看分组与导出。</div>';
       } else {
         inner += '<div class="itr-stats-empty">当前学生还没有成绩记录。在卡片模式「提交批改与分析」后，成绩会自动计入此处并生成曲线。</div>';
       }
@@ -2706,7 +3085,7 @@
     return '<div class="itr-vocab-item"><div><span class="w">' + escapeHtml(v.word) + '</span>' +
       (v.pos ? '<span class="p">' + escapeHtml(v.pos) + "</span>" : "") + '</div>' +
       '<div class="z">' + def + "</div>" + ctx +
-      '<button type="button" class="itr-vbtn" data-addvocab="1">＋生词本</button></div>';
+      '<button type="button" class="itr-vbtn" data-addvocab="1">＋添加生词</button></div>';
   }
   function getVocabFilterOptions() {
     return {
@@ -2738,7 +3117,7 @@
       '<span class="itr-vocab-filters-label">筛选</span>' +
       '<label class="itr-chip-check"><input type="checkbox" class="itr-vfilter" id="itr-vf-proper"> 仅专有名词</label>' +
       '<label class="itr-chip-check"><input type="checkbox" class="itr-vfilter" id="itr-vf-unknown"> 仅未收录词</label>' +
-      '<label class="itr-chip-check"><input type="checkbox" class="itr-vfilter" id="itr-vf-new"> 生词本未收录</label>' +
+      '<label class="itr-chip-check"><input type="checkbox" class="itr-vfilter" id="itr-vf-new"> 词汇收藏未收录</label>' +
       '<label class="itr-chip-check"><input type="checkbox" class="itr-vfilter" id="itr-vf-long"> 仅长词（≥10 字母）</label>' +
       '</div>';
     articles.forEach(function (a, i) {
@@ -2841,11 +3220,11 @@
     } else {
       addVocabToBook(word, entry ? entry.pos : "", entry ? entry.zh : "", ctx);
     }
-    setStatus("已将「" + word + "」加入生词本。", false);
+    setStatus("已将「" + word + "」加入词汇收藏。", false);
   }
   function doVocabExtract() {
     var raw = $("itr-input").value.trim();
-    if (!raw) { renderVocabPanel([], LEVELS[4], false); setStatus("请先粘贴英语文章，或到「文章库」选一篇。", true); return; }
+    if (!raw) { renderVocabPanel([], LEVELS[4], false); setStatus("请先粘贴英语文章，或到「文章资源」选一篇。", true); return; }
     var level = LEVELS[parseInt($("itr-level").value, 10) - 1] || LEVELS[4];
     var arts = (currentArtMode === "multi") ? splitArticles(raw) : [raw];
     if (currentArtMode === "multi" && arts.length < 2) arts = [raw];
@@ -2872,9 +3251,9 @@
     var panel = $("itr-lib-panel");
     var favs = getFavs();
     var html = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">' +
-      '<span style="font-size:13px;font-weight:600;">内置文章库（点击自动填入并匹配难度）</span>' +
+      '<span style="font-size:13px;font-weight:600;">内置文章资源（点击自动填入并匹配难度）</span>' +
       '<span style="flex:1;"></span>' +
-      '<button type="button" class="itr-btn itr-primary" id="itr-fav-now">＋ 收藏当前文章</button></div>';
+      '<button type="button" class="itr-btn itr-primary" id="itr-fav-now">＋ 收藏</button></div>';
 
     if (favs.length) {
       html += '<div style="font-size:13px;font-weight:600;margin:8px 0 6px;color:var(--itr-primary);">' + ICONS.star + ' 我的收藏（' + favs.length + '）</div>';
@@ -2981,7 +3360,7 @@
     var favs = getFavs();
     favs.unshift({ id: "f" + Date.now(), title: title, theme: "收藏", level: level ? level.id : 3, text: raw, ts: Date.now() });
     saveFavs(favs);
-    setStatus("已收藏《" + title + "》到「文章库 · 我的收藏」。", false);
+    setStatus("已收藏《" + title + "》到「文章资源 · 我的收藏」。", false);
     if ($("itr-lib-panel").classList.contains("open")) buildLibraryPanel();
   }
 
@@ -2995,19 +3374,19 @@
     var key = studentId ? ("itr_vbook_" + studentId) : vbookKey();
     var book = loadJSON(key, []);
     var lw = w.toLowerCase();
-    if (book.some(function (x) { return x.word.toLowerCase() === lw; })) { setStatus("「" + w + "」已在生词本中。", false); return; }
+    if (book.some(function (x) { return x.word.toLowerCase() === lw; })) { setStatus("「" + w + "」已在词汇收藏中。", false); return; }
     book.unshift({ word: w, pos: pos || "", zh: zh || "", ctx: ctx || "", box: 1, ts: Date.now() });
     saveJSON(key, book);
-    setStatus("已加入生词本： " + w, false);
+    setStatus("已加入词汇收藏： " + w, false);
   }
   function renderVBook() {
     var panel = $("itr-vbook-panel");
     var book = getVBook();
-    var html = '<div class="itr-book-head"><h3>' + ICONS.bookmark + ' 我的生词本</h3><span class="count">' + book.length + ' 个词</span><span class="spacer"></span>';
+    var html = '<div class="itr-book-head"><h3>' + ICONS.bookmark + ' 我的词汇收藏</h3><span class="count">' + book.length + ' 个词</span><span class="spacer"></span>';
     if (book.length) html += '<button type="button" class="itr-btn itr-primary" id="itr-vreview">' + ICONS.dice + ' 随机抽测 (' + book.length + ')</button>';
     html += '<button type="button" class="itr-link" id="itr-vbook-close">收起</button></div>';
     if (!book.length) {
-      html += '<div class="itr-book-empty">生词本还是空的。在「' + ICONS.books + ' 生词提取」结果里点「＋生词本」即可收藏难词，复习时更容易记住它们。</div>';
+      html += '<div class="itr-book-empty">词汇收藏还是空的。在「' + ICONS.books + ' 生词提取」结果里点「＋添加生词」即可收藏难词，复习时更容易记住它们。</div>';
     } else {
       html += '<div class="itr-book-list">';
       book.forEach(function (item, i) {
@@ -3060,7 +3439,7 @@
     }
     function finish() {
       panel.innerHTML = '<div class="itr-book-head"><h3>' + ICONS.dice + ' 抽测完成</h3><span class="spacer"></span><button type="button" class="itr-link" id="itr-vbook-back">返回</button></div>' +
-        '<div class="itr-book-empty">本轮抽测 ' + queue.length + ' 个词：认识 ' + right + '，不认识 ' + wrong + '。连续认识 5 次即视为掌握并移出生词本。坚持复习，词汇量会稳步上涨 ' + ICONS.spark + '</div>';
+        '<div class="itr-book-empty">本轮抽测 ' + queue.length + ' 个词：认识 ' + right + '，不认识 ' + wrong + '。连续认识 5 次即视为掌握并移出词汇收藏。坚持复习，词汇量会稳步上涨 ' + ICONS.spark + '</div>';
       $("itr-vbook-back").addEventListener("click", function () { renderVBook(); });
     }
     show();
@@ -3081,11 +3460,11 @@
   function renderWBook() {
     var panel = $("itr-wbook-panel");
     var book = getWBook();
-    var html = '<div class="itr-book-head"><h3>' + ICONS.clip + ' 我的错题本</h3><span class="count">' + book.length + ' 题待巩固</span><span class="spacer"></span>';
+    var html = '<div class="itr-book-head"><h3>' + ICONS.clip + ' 我的错题记录</h3><span class="count">' + book.length + ' 题待巩固</span><span class="spacer"></span>';
     if (book.length) html += '<button type="button" class="itr-btn itr-primary" id="itr-wreview">' + ICONS.refresh + ' 重做错题 (' + book.length + ')</button>';
     html += '<button type="button" class="itr-link" id="itr-wbook-close">收起</button></div>';
     if (!book.length) {
-      html += '<div class="itr-book-empty">错题本空空如也 —— 说明你还没提交过练习，或全都答对了 ' + ICONS.party + '</div>';
+      html += '<div class="itr-book-empty">错题记录空空如也 —— 说明你还没提交过练习，或全都答对了 ' + ICONS.party + '</div>';
     } else {
       html += '<div class="itr-book-list">';
       book.forEach(function (item, i) {
@@ -3154,7 +3533,7 @@
     }
     function finish() {
       panel.innerHTML = '<div class="itr-book-head"><h3>' + ICONS.refresh + ' 重做完成</h3><span class="spacer"></span><button type="button" class="itr-link" id="itr-wbook-back">返回</button></div>' +
-        '<div class="itr-book-empty">本轮重做 ' + queue.length + ' 题：已掌握 ' + master + '，仍需巩固 ' + notMaster + '。连续答对 5 次即移出错题本。错题越少，离目标分数越近！</div>';
+        '<div class="itr-book-empty">本轮重做 ' + queue.length + ' 题：已掌握 ' + master + '，仍需巩固 ' + notMaster + '。连续答对 5 次即移出错题记录。错题越少，离目标分数越近！</div>';
       $("itr-wbook-back").addEventListener("click", function () { renderWBook(); });
     }
     show();
@@ -3289,7 +3668,7 @@
     }
     function xAt(idx) { return padL + (maxN <= 1 ? plotW / 2 : plotW * idx / (maxN - 1)); }
     function yAt(v) { return padT + plotH * (1 - v / yMax); }
-    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="成绩趋势曲线">';
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="成绩曲线">';
     var steps = (metric === "pct") ? [0, 25, 50, 75, 100] : [0, yMax * 0.25, yMax * 0.5, yMax * 0.75, yMax];
     steps.forEach(function (v) {
       var y = yAt(v);
@@ -3362,10 +3741,10 @@
     }
     var totalRecords = series.reduce(function (a, s) { return a + s.records.length; }, 0);
 
-    var titleTxt = ICONS.trend + " 成绩趋势曲线";
+    var titleTxt = ICONS.trend + " 成绩曲线";
     if (compare) titleTxt = ICONS.users + " 全体学生成绩对比";
-    else if (group === "exam") titleTxt = ICONS.trend + " 成绩趋势（按考试分线）";
-    else if (group === "level") titleTxt = ICONS.trend + " 成绩趋势（按难度级别分线）";
+    else if (group === "exam") titleTxt = ICONS.trend + " 成绩档案（按考试分线）";
+    else if (group === "level") titleTxt = ICONS.trend + " 成绩档案（按难度级别分线）";
 
     var html = '<div class="itr-stats-head"><h3>' + titleTxt + '</h3>' +
       '<span class="spacer"></span>' +
@@ -3463,7 +3842,7 @@
       "@media print{body{margin:12mm;}}" +
       "</style></head><body>" +
       "<div class='hd'><div><h1>" + ICONS.trend + " 成绩档案报告" + scopeTxt + "</h1></div><div class='meta'>学生：" + escapeHtml(stu.name) + "（" + escapeHtml(stu.id) + "）<br>导出日期：" + ds + "</div></div>" +
-      "<div class='sec-title'>成绩趋势曲线（" + (metric === "pct" ? "正确率 (%)" : "答对题数") + scopeTxt + "）</div>" +
+      "<div class='sec-title'>成绩曲线（" + (metric === "pct" ? "正确率 (%)" : "答对题数") + scopeTxt + "）</div>" +
       "<div class='chart'>" + chartSvg + "</div>" +
       "<div class='sec-title'>成绩明细（共 " + grades.length + " 次练习" + scopeTxt + "）</div>" +
       "<table><thead><tr><th>序号</th><th>日期</th><th>考试</th><th>难度</th><th class='c'>正确率</th><th class='c'>答对/总</th><th class='c'>未作答</th></tr></thead><tbody>" + rows + "</tbody></table>" +
@@ -3483,7 +3862,6 @@
   }
 
   function doGenerate() {
-    saveSettings();
     var raw = $("itr-input").value.trim();
     if (!raw) { setStatus("请先粘贴英语文章。", true); return; }
     var st = getAISettings();
@@ -3492,9 +3870,12 @@
     }
     var level = LEVELS[parseInt($("itr-level").value, 10) - 1] || LEVELS[4];
     var exam = $("itr-exam").value;
-    var count = Math.max(1, Math.min(30, parseInt($("itr-count").value, 10) || 6));
+    var count = clampQuestionCount($("itr-count").value, 6);
+    $("itr-count").value = String(count);
+    saveSettings();
     var qtypes = getSelectedQuestionTypes();
     if (!qtypes.length) { setStatus("请至少选择一种出题题型。", true); return; }
+    var allocation = getGenerationAllocation(count, qtypes);
     var showArticle = $("itr-showarticle").value;
     var withKey = $("itr-withkey").value;
 
@@ -3511,7 +3892,7 @@
     genBtn.classList.add("itr-busy");
     setStatus(currentArtMode === "multi" ? ("正在通过 AI 接口并发生成 " + arts.length + " 篇文章的试题…") : "正在通过 AI 接口生成试题…");
 
-    var tasks = arts.map(function (a) { return apiGenerate(a, count, exam, level, qtypes); });
+    var tasks = arts.map(function (a) { return apiGenerate(a, count, exam, level, qtypes, allocation); });
 
     Promise.all(tasks).then(function (results) {
       var sections = results.map(function (qs, i) {
@@ -3527,22 +3908,16 @@
     });
   }
 
-  $("itr-generate").addEventListener("click", doGenerate);
+  function generateWithNormalSettings() { activeCustomWeights = null; doGenerate(); }
+  $("itr-generate").addEventListener("click", generateWithNormalSettings);
   $("itr-sample").addEventListener("click", function () {
     $("itr-input").value = (currentArtMode === "multi") ? SAMPLE_MULTI : SAMPLE; updateMeta();
   });
-  $("itr-clear").addEventListener("click", function () {
-    $("itr-input").value = ""; updateMeta(); $("itr-cards").innerHTML = ""; $("itr-worksheet").innerHTML = ""; $("itr-vocab").classList.remove("open");
-  });
-  $("itr-lib-btn").addEventListener("click", function () { switchTab("library"); });
   $("itr-vocab-btn").addEventListener("click", function () { switchTab("practice"); doVocabExtract(); });
   $("itr-add-sel-vocab").addEventListener("click", addSelectionToVBook);
   $("itr-fav-btn").addEventListener("click", saveFavorite);
-  $("itr-vbook-btn").addEventListener("click", function () { switchTab("vbook"); });
-  $("itr-wbook-btn").addEventListener("click", function () { switchTab("wbook"); });
   $("itr-stu-all").addEventListener("click", selectAllStudents);
   $("itr-stu-clear").addEventListener("click", clearSelectedStudents);
-  $("itr-stats-btn").addEventListener("click", function () { switchTab("grades"); });
   $("itr-student-selector").addEventListener("change", function(e){
     var t=e.target; if(!t || !t.matches || !t.matches('input[type="checkbox"][data-stu-id]')) return;
     toggleSelectedStudentId(t.getAttribute('data-stu-id'), t.checked);
@@ -3554,7 +3929,8 @@
     applyTheme(dark ? "light" : "dark");
     saveSettings();
   });
-  $("itr-smart").addEventListener("click", recommendPractice);
+  var smartSettingsBtn = $("itr-smart"); if (smartSettingsBtn) smartSettingsBtn.addEventListener("click", function () { openCustomSettings(smartSettingsBtn); });
+  var articleSettingsBtn = $("itr-custom-generate"); if (articleSettingsBtn) articleSettingsBtn.addEventListener("click", function () { openCustomSettings(articleSettingsBtn); });
   $("itr-remind").addEventListener("click", function () { scheduleReminder(30); });
   $("itr-adapt").addEventListener("change", saveSettings);
   document.addEventListener("keydown", onKeydown);
@@ -3571,7 +3947,7 @@
   // ---------- Smart practice: recommend an article targeting the weakest type ----------
   function recommendPractice() {
     var book = getWBook();
-    if (!book.length) { setStatus("错题本还是空的，先去做几道题再来智能推荐吧。", true); return; }
+    if (!book.length) { setStatus("错题记录还是空的，先去做几道题再来智能推荐吧。", true); return; }
     var tally = {};
     book.forEach(function (it) { var t = normType(it.q.type); tally[t] = (tally[t] || 0) + 1; });
     var weak = Object.keys(tally).sort(function (a, b) { return tally[b] - tally[a]; })[0];
@@ -3579,10 +3955,10 @@
     var lv = parseInt($("itr-level").value, 10) || 3;
     var pick = null;
     LIBRARY.forEach(function (a) { if (!pick || Math.abs(a.level - lv) < Math.abs(pick.level - lv)) pick = a; });
-    if (!pick) { setStatus("文章库为空，无法推荐。", true); return; }
+    if (!pick) { setStatus("文章资源为空，无法推荐。", true); return; }
     $("itr-input").value = pick.text;
     updateMeta();
-    setStatus("已为你推荐针对【" + typeLabel(weak) + "】的练习文章《" + pick.title + "》，点击「一键生成试题」开始（错题本共 " + book.length + " 道，其中该题型 " + tally[weak] + " 道）。");
+    setStatus("已为你推荐针对【" + typeLabel(weak) + "】的练习文章《" + pick.title + "》，点击「一键生成试题」开始（错题记录共 " + book.length + " 道，其中该题型 " + tally[weak] + " 道）。");
   }
 
   // ---------- Review reminder (browser notification, with in-page fallback) ----------
@@ -3604,7 +3980,7 @@
   // ---------- Theme (dark / light), persisted ----------
   function applyTheme(theme) {
     if (theme === "dark") { $("itr-app").setAttribute("data-itr-theme", "dark"); document.body.style.backgroundColor = '#0E1B2A'; }
-    else { $("itr-app").removeAttribute("data-itr-theme"); document.body.style.backgroundColor = '#F4F9FB'; }
+    else { $("itr-app").removeAttribute("data-itr-theme"); document.body.style.backgroundColor = '#DFF2FF'; }
     var btn = $("itr-theme-btn"); if (btn) btn.innerHTML = theme === "dark" ? ICONS.sun + " 浅色" : ICONS.moon + " 主题";
   }
   function initTheme() {
@@ -3659,10 +4035,10 @@
     bar.innerHTML = "";
     var defs = [
       { pane: "practice", label: ICONS.pencil + " 练习答题" },
-      { pane: "library", label: ICONS.book + " 文章库" },
-      { pane: "vbook", label: ICONS.bookmark + " 生词本" },
-      { pane: "wbook", label: ICONS.clip + " 错题本" },
-      { pane: "grades", label: ICONS.trend + " 成绩趋势" }
+      { pane: "library", label: ICONS.book + " 文章资源" },
+      { pane: "vbook", label: ICONS.bookmark + " 词汇复习" },
+      { pane: "wbook", label: ICONS.clip + " 错题复习" },
+      { pane: "grades", label: ICONS.trend + " 成绩档案" }
     ];
     if (currentRole === "teacher") defs.push({ pane: "teacher", label: ICONS.teacher + " 教师中心" });
     defs.forEach(function (t) {
@@ -3864,8 +4240,8 @@ function showRoleGate() {
   function getStudentsByClass(classId){ return getAccounts().filter(function(a){ return a.role==='student' && a.classId===classId; }); }
 
   function getSession(){ try{ return JSON.parse(localStorage.getItem(SESSION_KEY))||null; }catch(e){ return null; } }
-  function setSession(u){ currentUser = u; try{ localStorage.setItem(SESSION_KEY, JSON.stringify(u)); }catch(e){} }
-  function clearSession(){ currentUser = null; try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+  function setSession(u){ currentUser = u; app.setAttribute('data-itr-session', '1'); try{ localStorage.setItem(SESSION_KEY, JSON.stringify(u)); }catch(e){} }
+  function clearSession(){ currentUser = null; app.removeAttribute('data-itr-session'); try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
 
   (function(){ if(!getAdmin()) saveAdmin({ username:'Kimdu', pass:'Kimdu@2026' }); })();
 
@@ -4276,13 +4652,13 @@ function showRoleGate() {
   function renderTCLibrary() {
     if (!currentUser || currentUser.role !== 'teacher') return;
     var panel = document.getElementById('tc-panel-library'); if (!panel) return;
-    var html = '<div class="itr-adm-form"><label>录入文章（分级后存入你的班级文章库，学生可在「文章库」中选用）</label>'
+    var html = '<div class="itr-adm-form"><label>录入文章（分级后存入你的班级文章资源，学生可在「文章资源」中选用）</label>'
       + '<div class="itr-row"><input type="text" id="tc-art-title" placeholder="文章标题" style="flex:2 1 240px;" /><select id="tc-art-level" style="flex:0 0 120px;">'+levelOptions()+'</select></div>'
       + '<textarea id="tc-art-text" placeholder="粘贴英语文章正文…" style="width:100%;min-height:120px;margin-top:8px;border:1px solid var(--itr-border);border-radius:8px;padding:10px;font:inherit;background:var(--itr-card);color:var(--itr-fg);"></textarea>'
-      + '<div class="itr-row" style="margin-top:8px;"><button type="button" class="itr-btn itr-primary" id="tc-art-add">保存到文章库</button></div></div>';
+      + '<div class="itr-row" style="margin-top:8px;"><button type="button" class="itr-btn itr-primary" id="tc-art-add">保存到文章资源</button></div></div>';
     html += '<div class="itr-lib-grid" id="tc-art-list">';
     var lib = getTeacherLibrary();
-    if (!lib.length) html += '<div style="color:var(--itr-muted);font-size:13px;padding:10px 0;">文章库为空。</div>';
+    if (!lib.length) html += '<div style="color:var(--itr-muted);font-size:13px;padding:10px 0;">文章资源为空。</div>';
     lib.forEach(function(art,i){
       var lv = LEVELS[art.level-1];
       html += '<div class="itr-lib-card"><div class="t">'+escapeHtml(art.title)+'</div><div class="m"><span class="chip lv">'+(lv?lv.name:('L'+art.level))+'</span></div><div class="wc">'+countWords(art.text)+' 词 <span class="itr-fav-x" data-artrm="'+i+'" title="删除">'+ICONS.x+'</span></div></div>';
@@ -4294,7 +4670,7 @@ function showRoleGate() {
       var text = document.getElementById('tc-art-text').value.trim();
       var lv = parseInt(document.getElementById('tc-art-level').value, 10);
       if (!title || !text) { showToast('请填写标题与正文'); return; }
-      var l = getTeacherLibrary(); l.unshift({ title:title, level:lv, text:text, ts:Date.now() }); saveTeacherLibrary(l); renderTCLibrary(); showToast('已保存到文章库');
+      var l = getTeacherLibrary(); l.unshift({ title:title, level:lv, text:text, ts:Date.now() }); saveTeacherLibrary(l); renderTCLibrary(); showToast('已保存到文章资源');
     });
     panel.querySelectorAll('[data-artrm]').forEach(function(b){ b.addEventListener('click', function(){ var l=getTeacherLibrary(); l.splice(+b.getAttribute('data-artrm'),1); saveTeacherLibrary(l); renderTCLibrary(); }); });
   }
@@ -4315,6 +4691,8 @@ function showRoleGate() {
     var session = getSession();
     if (session && session.username) {
       currentUser = session;
+      app.setAttribute('data-itr-session', '1');
+      hideAuthGate();
       _origInitRole();
     } else {
       showAuthGate(true);
@@ -4380,7 +4758,7 @@ function showRoleGate() {
   function renderAdminFeishu(){
     var cfg = getFeishuConfig();
     var html = '<div class="itr-adm-form"><label>飞书多维表格实时同步</label>'
-      + '<p class="itr-hint">开启后，账号 / 班级 / 邀请码 / 设置 / 生词本 / 词汇书 / 成绩 / 题库会在操作后自动同步到飞书多维表格。</p>'
+      + '<p class="itr-hint">开启后，账号 / 班级 / 邀请码 / 设置 / 词汇收藏 / 词汇书 / 成绩 / 题库会在操作后自动同步到飞书多维表格。</p>'
       + '<label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;margin:12px 0;"><input type="checkbox" id="itr-feishu-enabled" ' + (cfg.enabled ? 'checked' : '') + ' /> 启用实时同步</label>'
       + '<div class="itr-field"><label>Access Token（User Access Token）</label><input type="password" id="itr-feishu-token" placeholder="通过飞书 OAuth / API 调试台获取" autocomplete="off" value="' + escapeHtml(cfg.accessToken || '') + '" /></div>'
       + '<div class="itr-field"><label>Base Token</label><input type="text" id="itr-feishu-base" readonly value="' + escapeHtml(cfg.baseToken) + '" /></div>'
@@ -4531,7 +4909,7 @@ function showRoleGate() {
     });
     html+='</tbody></table>';
     var c=document.getElementById('itr-admin-content'); if(c) c.innerHTML=html;
-    if(c) c.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(){ var id=b.getAttribute('data-del'); if(confirm('确定删除该账号？其错题本/生词本/成绩将一并丢失。')){ saveAccounts(getAccounts().filter(function(x){return x.id!==id;})); renderAdminAccounts(); } }); });
+    if(c) c.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(){ var id=b.getAttribute('data-del'); if(confirm('确定删除该账号？其错题记录/词汇收藏/成绩将一并丢失。')){ saveAccounts(getAccounts().filter(function(x){return x.id!==id;})); renderAdminAccounts(); } }); });
   }
   function showClassStudents(clsId){
     document.querySelectorAll('#itr-app .itr-modal').forEach(function(m){ m.remove(); });
