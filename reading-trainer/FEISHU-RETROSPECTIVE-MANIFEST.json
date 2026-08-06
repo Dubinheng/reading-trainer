@@ -1,0 +1,14 @@
+{
+  "title": "新世纪reading trainer 程序复盘",
+  "source": "BUG-RETROSPECTIVE.md",
+  "document_id": "M1aVdAEBeoCZPYxqckIcpjASn2g",
+  "url": "https://bcntod1rxshh.feishu.cn/docx/M1aVdAEBeoCZPYxqckIcpjASn2g",
+  "created_at": "2026-08-07",
+  "verification": {
+    "title_present": true,
+    "bug_14_present": true,
+    "server_source_of_truth_present": true,
+    "content_characters": 5606,
+    "block_count": 146
+  }
+}
