@@ -7,6 +7,8 @@
 
 Reading Trainer 已从“浏览器 localStorage 为主存储”改为“腾讯服务器数据库为主、飞书多维表格为同步副本”。浏览器只保留当前页面运行所需的内存状态，不再调用 `localStorage.setItem` 或 `sessionStorage.setItem` 保存业务数据。
 
+这是项目不可回退的数据契约。今后所有功能修改都必须先写入服务器，再由服务器同步飞书；服务器写入失败时不得降级为浏览器本地保存。项目已增加 `AGENTS.md` 和 `scripts/check_persistence_contract.py`，用于阻止后续修改重新引入本地持久化。
+
 ## 新数据流
 
 ```mermaid

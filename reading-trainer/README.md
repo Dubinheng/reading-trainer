@@ -1,12 +1,12 @@
 # 新世纪 Reading Trainer
 
-这是从 WorkBuddy 交接版整理出的可维护副本，已重新优化登录页的桌面、竖屏和手机布局。
+这是从 WorkBuddy 交接版整理出的可维护版本，已完成登录页优化和服务器化数据改造。
 
-完整的项目来源、实施过程、功能状态、测试结果和上线风险请查看 [`REPORT.md`](./REPORT.md)。
+当前数据架构和验收结果以 [`DATA-PERSISTENCE-REPORT.md`](./DATA-PERSISTENCE-REPORT.md) 为准；历史设计过程可查看 [`REPORT.md`](./REPORT.md)。
 
 ## 打开
 
-双击 `ielts-toefl-reader.html` 即可使用。主文件仍会读取 `assets/` 中的登录边框和 Logo，移动或发布时请保留目录结构。
+正式使用地址为 `https://kimdu.site/reading-trainer/`。直接双击 `ielts-toefl-reader.html` 只能查看前端页面，账号和业务功能仍依赖腾讯服务器 `/reading-trainer/api/v2`，不能把本地文件当成完整生产系统。
 
 ## 登录页设计来源
 
@@ -15,12 +15,23 @@
 - 卡片参考：`/Users/apple/Desktop/新世纪/网页-KIM/名师简介-06.png`
 - Illustrator 源稿：`/Users/apple/Desktop/新世纪/网页-KIM/完整单画.ai`
 
-## 注意事项
+## 数据保存规则（不可回退）
 
-- 账号、成绩和设置主要保存在浏览器 `localStorage`。
-- 管理员凭据仅用于管理员登录，不在其他页面展示；正式部署前请改为安全的后端配置。
-- AI 出题和飞书同步涉及跨域网络请求，正式发布时建议改为后端代理。
-- `WORKBUDDY_REPORT.md` 是原交接报告，部分文件名和测试账号已过期。
+- 腾讯服务器独立数据库 `reading_trainer.db` 是唯一主库。
+- 飞书多维表格是脱敏、幂等、非破坏性的同步副本，不是网页直连数据库。
+- 浏览器不保存账号、会话或业务数据；`localStorage` 只允许读取并清理一次性旧数据。
+- AI Key、飞书 Token 和管理员凭据只保存在服务器私有配置中。
+- Reading Trainer 不得使用或改动原项目的 `resumes.db`。
+- 未经用户明确要求，不修改已经验收的登录页视觉。
+
+未来任何改动先阅读 [`AGENTS.md`](./AGENTS.md)，并运行：
+
+```bash
+python3 scripts/check_persistence_contract.py
+python3 -m pytest -q server/tests
+```
+
+`WORKBUDDY_REPORT.md` 和 `REPORT.md` 中关于 localStorage 的段落属于改造前历史记录，不能作为当前架构依据。
 
 ## 验证截图
 
