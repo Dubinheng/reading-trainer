@@ -1690,7 +1690,7 @@
     </div>
   </section>
 
-  <p class="itr-foot-note">本模块为纯前端实现，可嵌入任意网页（iframe 或直接内联）。</p>
+  <p class="itr-foot-note">账号与学习数据由腾讯服务器统一保存，并同步到飞书数据表。</p>
 </div>
 
 <script>
@@ -1996,13 +1996,122 @@
   // dedupe keys defensively (object literal keeps last duplicate)
   var STOP = new Set(["the","and","that","this","with","from","they","them","their","there","then","than","what","when","where","which","who","whom","whose","why","how","into","onto","upon","over","under","above","below","between","during","before","after","against","although","because","however","therefore","thus","while","would","could","should","might","these","those","being","having","something","anything","everything","nothing","without","within","across","always","often","many","more","most","some","such","also","each","even","still","every","both","few","own","same","very","just","like","make","made","well","will","your","you","our","are","were","been","have","has","was","is","do","does","did","can","may","must","shall","not","but","for","nor","yet","out","up","down","off","on","in","at","of","to","a","an","as","it","he","she","we","i","me","him","her","us","be","by","or","if","so","no","yes","about","than","its","his","her","my","am"]);
 
-  // ---------- Settings persistence ----------
+  // ---------- Server-backed persistence ----------
+  // Production data lives in the Tencent server database. The browser only keeps
+  // an in-memory working copy for synchronous rendering; no business record or
+  // credential is written to localStorage/sessionStorage.
+  var API_V2 = '/reading-trainer/api/v2';
+  var serverState = {
+    accounts: [], invites: [], classes: [],
+    ai: { provider:'', endpoint:'', model:'', enabled:false, hasKey:false },
+    feishu: { enabled:false, configured:false, authorized:false },
+    userData: {}
+  };
+  var serverAdmin = false;
+  var uiMemory = { settings:{}, selectedStudentIds:[], curStudentId:'', legacyChecked:false };
+
+  function apiV2(path, options) {
+    var opts = Object.assign({ credentials:'same-origin' }, options || {});
+    opts.headers = Object.assign({ 'Content-Type':'application/json' }, opts.headers || {});
+    return fetch(API_V2 + path, opts).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(data){
+        if (!r.ok || data.success === false) {
+          var detail = data && data.error;
+          throw new Error((detail && detail.message) || (typeof detail === 'string' ? detail : '') || ('服务器请求失败（' + r.status + '）'));
+        }
+        return data;
+      });
+    });
+  }
+  function cloneData(value, fallback) {
+    try { return JSON.parse(JSON.stringify(value == null ? fallback : value)); }
+    catch (e) { return fallback; }
+  }
+  function applyServerState(next) {
+    if (!next || typeof next !== 'object') return;
+    ['accounts','invites','classes'].forEach(function(k){ if(Array.isArray(next[k])) serverState[k]=next[k]; });
+    if (next.ai && typeof next.ai === 'object') serverState.ai = Object.assign({}, serverState.ai, next.ai);
+    if (next.feishu && typeof next.feishu === 'object') serverState.feishu = Object.assign({}, serverState.feishu, next.feishu);
+    if (next.userData && typeof next.userData === 'object') serverState.userData = next.userData;
+  }
+  function ownerData(ownerId) {
+    if (!ownerId) return {};
+    if (!serverState.userData[ownerId]) serverState.userData[ownerId] = {};
+    return serverState.userData[ownerId];
+  }
+  function persistGlobal(section, value) {
+    return apiV2('/state/' + encodeURIComponent(section), { method:'PUT', body:JSON.stringify({value:value}) })
+      .then(function(res){ applyServerState(res.state); if(section!=='feishu') syncAllToFeishu(); return res; })
+      .catch(function(err){ showToast('服务器保存失败：' + err.message); throw err; });
+  }
+  function persistUserData(section, ownerId, value) {
+    if (!ownerId) return Promise.resolve(null);
+    ownerData(ownerId)[section] = cloneData(value, []);
+    return apiV2('/data/' + encodeURIComponent(section), {
+      method:'PUT', body:JSON.stringify({ownerId:ownerId, value:value})
+    }).then(function(res){ if(res.state) applyServerState(res.state); syncAllToFeishu(); return res; })
+      .catch(function(err){ showToast('服务器保存失败：' + err.message); throw err; });
+  }
+  function legacyRead(key) {
+    try {
+      var raw = window.localStorage && window.localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  function legacyRemove(key) {
+    try { if (window.localStorage) window.localStorage.removeItem(key); } catch (e) {}
+  }
+  function mergeLegacy(serverValue, legacyValue, objectMode) {
+    if (objectMode) return Object.assign({}, legacyValue && typeof legacyValue === 'object' ? legacyValue : {}, serverValue && typeof serverValue === 'object' ? serverValue : {});
+    var out = Array.isArray(serverValue) ? cloneData(serverValue, []) : [];
+    var seen = {};
+    out.forEach(function(item){ try { seen[JSON.stringify(item)] = true; } catch(e){} });
+    (Array.isArray(legacyValue) ? legacyValue : []).forEach(function(item){
+      try { var key=JSON.stringify(item); if(!seen[key]){ seen[key]=true; out.push(item); } } catch(e){}
+    });
+    return out;
+  }
+  function migrateLegacyBrowserData() {
+    if (!currentUser || uiMemory.legacyChecked) return Promise.resolve();
+    uiMemory.legacyChecked = true;
+    if (currentUser.role === 'admin') { cleanVerifiedLegacyAdminCopies(); return Promise.resolve(); }
+    var owners = Object.keys(serverState.userData || {});
+    if (owners.indexOf(currentUser.id) === -1) owners.push(currentUser.id);
+    var jobs = [];
+    owners.forEach(function(ownerId){
+      ['vbook','wbook','grades','library'].forEach(function(section){
+        var key='itr_'+section+'_'+ownerId, legacy=legacyRead(key);
+        if (legacy == null) return;
+        var merged=mergeLegacy(ownerData(ownerId)[section], legacy, false);
+        jobs.push(persistUserData(section, ownerId, merged).then(function(){ legacyRemove(key); }));
+      });
+    });
+    [['favorites','itr_favs',false],['settings','itr_settings',true],['vbook','itr_vbook',false],['wbook','itr_wbook',false]].forEach(function(spec){
+      var legacy=legacyRead(spec[1]);
+      if (legacy == null) return;
+      var merged=mergeLegacy(ownerData(currentUser.id)[spec[0]], legacy, spec[2]);
+      jobs.push(persistUserData(spec[0], currentUser.id, merged).then(function(){ legacyRemove(spec[1]); }));
+    });
+    ['itr_session','itr_admin_session','itr_cur_student','itr_selected_students','itr_students'].forEach(legacyRemove);
+    return Promise.all(jobs).then(function(){ if(jobs.length) showToast('旧浏览器资料已安全迁移到腾讯服务器'); });
+  }
+  function cleanVerifiedLegacyAdminCopies() {
+    var checks = [
+      ['itr_accounts', function(list){ return Array.isArray(list) && list.filter(function(x){return x&&x.role!=='admin';}).every(function(x){return getAccountById(x.id);}); }],
+      ['itr_invites', function(list){ return Array.isArray(list) && list.every(function(x){return x&&findInvite(x.code);}); }],
+      ['itr_classes', function(list){ return Array.isArray(list) && list.every(function(x){return x&&getClassById(x.id);}); }]
+    ];
+    checks.forEach(function(spec){ var value=legacyRead(spec[0]); if(value!=null && spec[1](value)) legacyRemove(spec[0]); });
+    if (serverState.ai && serverState.ai.hasKey) legacyRemove('itr_ai_settings');
+    ['itr_admin','itr_admin_session','itr_session'].forEach(legacyRemove);
+  }
   function loadSettingsRaw() {
-    try { return JSON.parse(localStorage.getItem("itr_settings") || "{}"); } catch (e) { return {}; }
+    if (currentUser && currentUser.id) return ownerData(currentUser.id).settings || {};
+    return uiMemory.settings || {};
   }
   function loadSettings() {
     try {
-      var s = JSON.parse(localStorage.getItem("itr_settings") || "{}");
+      var s = loadSettingsRaw() || {};
       if (s.level) $("itr-level").value = String(s.level);
       if (s.exam) $("itr-exam").value = s.exam;
       if (s.outmode) setOutMode(s.outmode);
@@ -2029,10 +2138,10 @@
       qtypes: getSelectedQuestionTypes(),
       customWeights: activeCustomWeights || null,
       customCount: $("itr-custom-count") ? $("itr-custom-count").value : ((loadSettingsRaw() || {}).customCount || "6"),
-      role: (currentRole || (loadSettingsRaw() || {}).role || ""),
-      feishu: (loadSettingsRaw() || {}).feishu
+      role: (currentRole || (loadSettingsRaw() || {}).role || '')
     };
-    try { localStorage.setItem("itr_settings", JSON.stringify(s)); } catch (e) { syncAllToFeishu(); }
+    uiMemory.settings = s;
+    if (currentUser && currentUser.id) persistUserData('settings', currentUser.id, s);
   }
 
   // Provider presets: one-click endpoint + default model
@@ -2410,9 +2519,7 @@
 
   function apiGenerate(article, count, exam, level, types, allocation) {
     var st = getAISettings();
-    if (!st || !st.enabled || !st.endpoint || !st.key) throw new Error("AI 接口尚未由管理员配置，请在「管理者后台 → AI 接口」中设置并保存。");
-    var endpoint = validateEndpoint(st.endpoint.trim());
-    var key = st.key.trim();
+    if (!st || !st.enabled || !st.hasKey) throw new Error("AI 接口尚未由管理员配置，请在「管理者后台 → AI 接口」中设置并保存。");
     var model = st.model ? st.model.trim() : ((PROVIDERS[st.provider] && PROVIDERS[st.provider].model) || "gpt-4o-mini");
     var body = {
       model: model,
@@ -2426,15 +2533,12 @@
     if (p && p.json) body.response_format = { type: "json_object" };
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, 60000);
-    return fetch(endpoint, {
+    return apiV2('/ai/chat', {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
       body: JSON.stringify(body), signal: ctrl.signal
-    }).then(function (r) {
-      clearTimeout(timer);
-      if (!r.ok) return r.text().then(function () { throw new Error(sanitizeApiError(r.status)); });
-      return r.json();
     }).then(function (data) {
+      clearTimeout(timer);
+      data = data.result || data.data || data;
       var content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
       if (!content) throw new Error("API 返回格式异常。");
       var parsed = extractJSON(content);
@@ -2447,26 +2551,21 @@
   // Per-question AI explanation (requires a configured API)
   function apiExplain(q) {
     var st = getAISettings();
-    if (!st || !st.enabled || !st.endpoint || !st.key) throw new Error("AI 接口尚未由管理员配置。");
-    var endpoint = validateEndpoint(st.endpoint.trim());
-    var key = st.key.trim();
+    if (!st || !st.enabled || !st.hasKey) throw new Error("AI 接口尚未由管理员配置。");
     var model = st.model ? st.model.trim() : ((PROVIDERS[st.provider] && PROVIDERS[st.provider].model) || "gpt-4o-mini");
     var prompt = "你是一位雅思/托福阅读老师。请针对下面这道题，用简洁中文讲解：\n1) 正确答案为什么正确（依据来自原文哪里）；\n2) 题干或选项的陷阱、易错点；\n3) 这类题型的解题技巧。\n\n题型：" + typeLabel(q.type) +
       "\n题干：" + q.prompt + "\n正确答案：" + answerDisplay(q) + "\n原解析：" + (q.explanation || "无");
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, 45000);
-    return fetch(endpoint, {
+    return apiV2('/ai/chat', {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
       body: JSON.stringify({ model: model, messages: [
         { role: "system", content: "You are a patient IELTS/TOEFL reading tutor. Reply in clear Chinese." },
         { role: "user", content: prompt }
       ], temperature: 0.5 }), signal: ctrl.signal
-    }).then(function (r) {
-      clearTimeout(timer);
-      if (!r.ok) return r.text().then(function () { throw new Error(sanitizeApiError(r.status)); });
-      return r.json();
     }).then(function (data) {
+      clearTimeout(timer);
+      data = data.result || data.data || data;
       var c = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
       if (!c) throw new Error("API 返回格式异常。");
       return c.trim();
@@ -3015,7 +3114,7 @@
             '</div>';
         }
         inner += '<div class="itr-chart">' + drawLineChart([{ label: stu.name, color: PALETTE[0], records: grades }], "pct") + '</div>';
-        inner += '<div class="itr-stu-hint">横轴为练习次序（#1、#2…），纵轴为正确率。数据按学生隔离保存在本地浏览器，可在「' + ICONS.trend + ' 成绩档案」中查看分组与导出。</div>';
+        inner += '<div class="itr-stu-hint">横轴为练习次序（#1、#2…），纵轴为正确率。数据按学生隔离保存在腾讯服务器，可在「' + ICONS.trend + ' 成绩档案」中查看分组与导出。</div>';
       } else {
         inner += '<div class="itr-stats-empty">当前学生还没有成绩记录。在卡片模式「提交批改与分析」后，成绩会自动计入此处并生成曲线。</div>';
       }
@@ -3165,9 +3264,7 @@
     var unknown = words.filter(function (w) { return !w.zh; });
     if (!unknown.length) return Promise.resolve(words);
     var st = getAISettings();
-    if (!st || !st.enabled || !st.endpoint || !st.key) return Promise.resolve(words);
-    var endpoint = validateEndpoint(st.endpoint.trim());
-    var key = st.key.trim();
+    if (!st || !st.enabled || !st.hasKey) return Promise.resolve(words);
     var model = st.model ? st.model.trim() : "gpt-4o-mini";
     var list = unknown.map(function (w) { return w.word; }).join(", ");
     var prompt = "For each of these English words, give a concise Chinese definition and its part of speech. " +
@@ -3180,14 +3277,13 @@
       ],
       temperature: 0.2
     };
-    if (endpoint.indexOf("openai.com") >= 0) body.response_format = { type: "json_object" };
+    if (st.provider === 'openai') body.response_format = { type: "json_object" };
     var ctrl = new AbortController();
     var timer = setTimeout(function () { ctrl.abort(); }, 45000);
-    return fetch(endpoint, {
+    return apiV2('/ai/chat', {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
       body: JSON.stringify(body), signal: ctrl.signal
-    }).then(function (r) { clearTimeout(timer); if (!r.ok) throw new Error(sanitizeApiError(r.status)); return r.json(); })
+    }).then(function (data) { clearTimeout(timer); return data.result || data.data || data; })
       .then(function (data) {
         var content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
         if (!content) return words;
@@ -3229,7 +3325,7 @@
     var arts = (currentArtMode === "multi") ? splitArticles(raw) : [raw];
     if (currentArtMode === "multi" && arts.length < 2) arts = [raw];
     var articles = arts.map(function (t, i) { return { text: t, title: (arts.length > 1 ? "" : "") }; });
-    var aiSt = getAISettings(); var useAI = !!(aiSt && aiSt.enabled && aiSt.endpoint && aiSt.key);
+    var aiSt = getAISettings(); var useAI = !!(aiSt && aiSt.enabled && aiSt.hasKey);
     if (!useAI) {
       renderVocabPanel(articles, level, false);
       return;
@@ -3271,7 +3367,7 @@
 
     if (currentUser && currentUser.role === 'student' && currentUser.created_by) {
       var tlib = [];
-      try { tlib = JSON.parse(localStorage.getItem('itr_library_' + currentUser.created_by) || '[]'); } catch(e) { tlib = []; }
+      tlib = cloneData(ownerData(currentUser.created_by).library, []);
       if (tlib.length) {
         html += '<div style="font-size:13px;font-weight:600;margin:10px 0 6px;color:var(--itr-primary);">老师分享的文章（' + tlib.length + '）</div>';
         html += '<div class="itr-lib-grid">';
@@ -3316,7 +3412,7 @@
     var favNow = $("itr-fav-now"); if (favNow) favNow.addEventListener("click", function () { saveFavorite(); });
     panel.querySelectorAll(".itr-lib-card[data-t]").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        var tlib = []; try { tlib = JSON.parse(localStorage.getItem('itr_library_' + currentUser.created_by) || '[]'); } catch(e) { tlib = []; }
+        var tlib = cloneData(ownerData(currentUser.created_by).library, []);
         var art = tlib[+btn.getAttribute("data-t")]; if (!art) return;
         $("itr-input").value = art.text; $("itr-level").value = String(art.level);
         switchTab("practice"); updateMeta();
@@ -3338,12 +3434,25 @@
   }
 
   // ---------- My books: favorites (user-collected articles) ----------
+  function storageDescriptor(key) {
+    if (key === 'itr_favs') return { section:'favorites', ownerId:currentUser && currentUser.id };
+    var m = String(key || '').match(/^itr_(vbook|wbook|grades|library)_(.+)$/);
+    if (m) return { section:m[1], ownerId:m[2] };
+    return null;
+  }
   function loadJSON(key, def) {
-    try { var v = JSON.parse(localStorage.getItem(key)); return (v && typeof v === "object") ? v : def; } catch (e) { return def; }
+    var d = storageDescriptor(key);
+    if (d && d.ownerId) {
+      var value = ownerData(d.ownerId)[d.section];
+      return (value && typeof value === 'object') ? cloneData(value, def) : def;
+    }
+    if (key === 'itr_students') return cloneData(uiMemory.students || [], def);
+    return def;
   }
   function saveJSON(key, val) {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
-    if (/^itr_(wbook|vbook|grades|library)_/.test(key)) syncAllToFeishu();
+    var d = storageDescriptor(key);
+    if (d && d.ownerId) persistUserData(d.section, d.ownerId, val);
+    else if (key === 'itr_students') uiMemory.students = cloneData(val, []);
   }
   var FAVKEY = "itr_favs";
   function getFavs() { return loadJSON(FAVKEY, []); }
@@ -3546,8 +3655,8 @@
 
   function getStudents() { return loadJSON(STUKEY, []); }
   function saveStudents(a) { saveJSON(STUKEY, a); }
-  function getCurStudentId() { try { return localStorage.getItem(CURSTUKEY) || ""; } catch (e) { return ""; } }
-  function setCurStudentId(id) { try { localStorage.setItem(CURSTUKEY, id); } catch (e) {} }
+  function getCurStudentId() { return uiMemory.curStudentId || ''; }
+  function setCurStudentId(id) { uiMemory.curStudentId = id || ''; }
   function getGrades(sid) { return loadJSON("itr_grades_" + sid, []); }
   function saveGrades(sid, arr) { saveJSON("itr_grades_" + sid, arr.slice(-200)); syncAllToFeishu(); }
 
@@ -3564,8 +3673,8 @@
     if (list.length) return list[0];
     return { id: "s1", name: "默认学生" };
   }
-  function getSelectedStudentIds(){ try{ return JSON.parse(localStorage.getItem('itr_selected_students'))||[]; }catch(e){ return []; } }
-  function saveSelectedStudentIds(arr){ try{ localStorage.setItem('itr_selected_students', JSON.stringify(arr)); }catch(e){} }
+  function getSelectedStudentIds(){ return (uiMemory.selectedStudentIds || []).slice(); }
+  function saveSelectedStudentIds(arr){ uiMemory.selectedStudentIds = Array.isArray(arr) ? arr.slice() : []; }
   function getSelectableStudents(){
     if(currentUser && currentUser.role==='student') return [{id:currentUser.id, name:currentUser.username}];
     if(currentUser && currentUser.role==='teacher') return getStudentsByTeacher(currentUser.id).map(function(a){ return {id:a.id, name:a.username||a.name, classId:a.classId}; });
@@ -3846,7 +3955,7 @@
       "<div class='chart'>" + chartSvg + "</div>" +
       "<div class='sec-title'>成绩明细（共 " + grades.length + " 次练习" + scopeTxt + "）</div>" +
       "<table><thead><tr><th>序号</th><th>日期</th><th>考试</th><th>难度</th><th class='c'>正确率</th><th class='c'>答对/总</th><th class='c'>未作答</th></tr></thead><tbody>" + rows + "</tbody></table>" +
-      "<div class='foot'>由「雅思/托福阅读试题转换器」生成 · 数据按学生隔离保存在本地浏览器</div>" +
+      "<div class='foot'>由「雅思/托福阅读试题转换器」生成 · 数据按学生隔离保存在腾讯服务器</div>" +
       "</body></html>";
     var w = (typeof window.open === "function") ? window.open("", "_blank") : null;
     if (!w) { alert("导出失败：浏览器拦截了弹出窗口，请允许本页面弹出窗口后重试。"); return; }
@@ -3865,7 +3974,7 @@
     var raw = $("itr-input").value.trim();
     if (!raw) { setStatus("请先粘贴英语文章。", true); return; }
     var st = getAISettings();
-    if (!st || !st.enabled || !st.endpoint || !st.key) {
+    if (!st || !st.enabled || !st.hasKey) {
       setStatus("AI 接口尚未配置：请联系管理员在「管理者后台 → AI 接口」中设置并保存后重试。", true); return;
     }
     var level = LEVELS[parseInt($("itr-level").value, 10) - 1] || LEVELS[4];
@@ -4028,7 +4137,8 @@
   function saveRole(role) {
     currentRole = role;
     var s = loadSettingsRaw() || {}; s.role = role;
-    try { localStorage.setItem("itr_settings", JSON.stringify(s)); } catch (e) {}
+    uiMemory.settings = s;
+    if (currentUser && currentUser.id) persistUserData('settings', currentUser.id, s);
   }
   function buildTabs() {
     var bar = $("itr-tabs"); if (!bar) return;
@@ -4200,144 +4310,55 @@ function showRoleGate() {
   })();
 
   // ============================================================
-  // ACCOUNT SYSTEM (localStorage-based, backend-ready hooks)
+  // ACCOUNT SYSTEM (Tencent server + Flask session)
   // ============================================================
   // ============================================================
   // ACCOUNT SYSTEM v2 (role-separated, invite-gated, per-account IDs)
   // ============================================================
-  var ACCOUNTS_KEY = 'itr_accounts';
-  var INVITES_KEY  = 'itr_invites';
-  var ADMIN_KEY    = 'itr_admin';
-  var ADMIN_SESS   = 'itr_admin_session';
-  var SESSION_KEY  = 'itr_session';
-  var AI_KEY       = 'itr_ai_settings';
-  var CLASSES_KEY  = 'itr_classes';
-
   function uid(p){ return (p||'acc') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
   function genCode(){ var s='ABCDEFGHJKLMNPQRSTUVWXYZ23456789', r=''; for(var i=0;i<6;i++) r+=s[Math.floor(Math.random()*s.length)]; return 'NC-'+r; }
 
-  function getAccounts(){ try{ return JSON.parse(localStorage.getItem(ACCOUNTS_KEY))||[]; }catch(e){ return []; } }
-  function saveAccounts(a){ try{ localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(a)); }catch(e){} syncAllToFeishu(); }
+  function getAccounts(){ return serverState.accounts || []; }
+  function saveAccounts(a){ serverState.accounts = cloneData(a, []); return persistGlobal('accounts', a); }
   function findAccount(username, role){ var all=getAccounts(); for(var i=0;i<all.length;i++){ if(all[i].username===username && all[i].role===role) return all[i]; } return null; }
   function getAccountById(id){ var all=getAccounts(); for(var i=0;i<all.length;i++){ if(all[i].id===id) return all[i]; } return null; }
 
-  function getInvites(){ try{ return JSON.parse(localStorage.getItem(INVITES_KEY))||[]; }catch(e){ return []; } }
-  function saveInvites(a){ try{ localStorage.setItem(INVITES_KEY, JSON.stringify(a)); }catch(e){} syncAllToFeishu(); }
+  function getInvites(){ return serverState.invites || []; }
+  function saveInvites(a){ serverState.invites = cloneData(a, []); return persistGlobal('invites', a); }
   function findInvite(code){ var all=getInvites(); for(var i=0;i<all.length;i++){ if(all[i].code===code) return all[i]; } return null; }
 
-  function getAdmin(){ try{ return JSON.parse(localStorage.getItem(ADMIN_KEY))||null; }catch(e){ return null; } }
-  function saveAdmin(a){ try{ localStorage.setItem(ADMIN_KEY, JSON.stringify(a)); }catch(e){} }
-  function getAdminSession(){ try{ return JSON.parse(localStorage.getItem(ADMIN_SESS))||null; }catch(e){ return null; } }
-  function setAdminSession(a){ try{ if(a) localStorage.setItem(ADMIN_SESS, JSON.stringify(a)); else localStorage.removeItem(ADMIN_SESS); }catch(e){} }
+  function getAdmin(){ return serverAdmin ? {authenticated:true} : null; }
+  function saveAdmin(){ return null; }
+  function getAdminSession(){ return serverAdmin ? {authenticated:true} : null; }
+  function setAdminSession(a){ serverAdmin = !!a; }
 
-  function getAISettings(){ try{ return JSON.parse(localStorage.getItem(AI_KEY))||null; }catch(e){ return null; } }
-  function saveAISettings(s){ try{ localStorage.setItem(AI_KEY, JSON.stringify(s)); }catch(e){} syncAllToFeishu(); }
+  function getAISettings(){ return serverState.ai || null; }
+  function saveAISettings(s){ serverState.ai = Object.assign({}, serverState.ai, s); return persistGlobal('ai', s); }
 
-  function getClasses(){ try{ return JSON.parse(localStorage.getItem(CLASSES_KEY))||[]; }catch(e){ return []; } }
-  function saveClasses(a){ try{ localStorage.setItem(CLASSES_KEY, JSON.stringify(a)); }catch(e){} syncAllToFeishu(); }
+  function getClasses(){ return serverState.classes || []; }
+  function saveClasses(a){ serverState.classes = cloneData(a, []); return persistGlobal('classes', a); }
   function getClassById(id){ var all=getClasses(); for(var i=0;i<all.length;i++){ if(all[i].id===id) return all[i]; } return null; }
   function getClassesByTeacher(teacherId){ return getClasses().filter(function(c){ return c.teacherId===teacherId; }); }
   function getStudentsByClass(classId){ return getAccounts().filter(function(a){ return a.role==='student' && a.classId===classId; }); }
 
-  function getSession(){ try{ return JSON.parse(localStorage.getItem(SESSION_KEY))||null; }catch(e){ return null; } }
-  function setSession(u){ currentUser = u; app.setAttribute('data-itr-session', '1'); try{ localStorage.setItem(SESSION_KEY, JSON.stringify(u)); }catch(e){} }
-  function clearSession(){ currentUser = null; app.removeAttribute('data-itr-session'); try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+  function getSession(){ return currentUser; }
+  function setSession(u){ currentUser = u || null; if(u) app.setAttribute('data-itr-session','1'); else app.removeAttribute('data-itr-session'); }
+  function clearSession(){ setSession(null); }
 
-  (function(){ if(!getAdmin()) saveAdmin({ username:'Kimdu', pass:'Kimdu@2026' }); })();
-
-  // ===== Feishu Bitable real-time sync =====
-  var FEISHU_DEFAULTS = {
-    enabled: false,
-    baseToken: 'TmNvbO1ypahHLksucmFcKpZJnJe',
-    accessToken: '',
-    tables: {
-      accounts: 'tblCtUT0ycLQ6BNu',
-      classes: 'tblkUyz3diZ7EZ8l',
-      wbook: 'tblVR35eEUrM3ES5',
-      vbook: 'tblbIuMHf8RwoVkT',
-      grades: 'tbl0KO8yrcZMiTzP',
-      library: 'tblFfhGzCg9EL1n5',
-      invites: 'tblsCIOlB3QCp1D9',
-      settings: 'tbl062TIlW8iEPXB'
-    }
-  };
-  function getFeishuConfig(){
-    var s = loadSettings();
-    return Object.assign({}, FEISHU_DEFAULTS, (s && s.feishu) || {});
-  }
-  function feishuUrl(tableId, suffix){
-    return 'https://open.feishu.cn/open-apis/bitable/v1/apps/' + getFeishuConfig().baseToken + '/tables/' + tableId + (suffix || '');
-  }
-  function feishuFetch(tableId, suffix, method, body){
-    var cfg = getFeishuConfig();
-    if (!cfg.enabled || !cfg.accessToken) return Promise.resolve(null);
-    var opts = { method: method || 'GET', headers: { 'Authorization': 'Bearer ' + cfg.accessToken, 'Content-Type': 'application/json; charset=utf-8' } };
-    if (body) opts.body = JSON.stringify(body);
-    return fetch(feishuUrl(tableId, suffix), opts).then(function(r){ return r.json(); }).catch(function(e){ console.error('Feishu fetch error', e); return {code: -1}; });
-  }
-  function feishuListAll(tableId){
-    return feishuFetch(tableId, '/records?page_size=500').then(function(res){
-      if (!res || res.code !== 0) return [];
-      return res.data.items || [];
-    });
-  }
-  function feishuDeleteRecords(tableId, recordIds){
-    if (!recordIds.length) return Promise.resolve();
-    var cfg = getFeishuConfig();
-    return Promise.all(recordIds.map(function(rid){
-      return fetch(feishuUrl(tableId, '/records/' + rid), { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + cfg.accessToken } }).catch(function(e){ console.error('Feishu delete error', e); });
-    }));
-  }
-  function feishuBatchCreate(tableId, records){
-    if (!records.length) return Promise.resolve();
-    var cfg = getFeishuConfig();
-    var url = feishuUrl(tableId, '/records/batch_create');
-    var batches = [];
-    for (var i = 0; i < records.length; i += 500) batches.push(records.slice(i, i + 500));
-    return batches.reduce(function(p, batch){
-      return p.then(function(){
-        return fetch(url, { method: 'POST', headers: { 'Authorization': 'Bearer ' + cfg.accessToken, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify({ records: batch }) }).catch(function(e){ console.error('Feishu batch create error', e); });
-      });
-    }, Promise.resolve());
-  }
-  function syncTableReplaceAll(tableId, records, fieldMapper){
-    return feishuListAll(tableId).then(function(items){
-      var ids = items.map(function(it){ return it.record_id; });
-      return feishuDeleteRecords(tableId, ids).then(function(){
-        var recs = records.map(fieldMapper).filter(Boolean);
-        return feishuBatchCreate(tableId, recs);
-      });
-    });
-  }
+  // ===== Feishu Bitable sync (server-side OAuth, non-destructive upsert) =====
+  function getFeishuConfig(){ return serverState.feishu || {}; }
   var feishuSyncTimer = null;
-  function syncAllToFeishu(){
+  function syncAllToFeishu(immediate){
     var cfg = getFeishuConfig();
-    if (!cfg.enabled || !cfg.accessToken) return;
+    if (!cfg.enabled || !cfg.authorized) return Promise.resolve(null);
     if (feishuSyncTimer) clearTimeout(feishuSyncTimer);
-    feishuSyncTimer = setTimeout(function(){
-      var accounts = getAccounts();
-      var classes = getClasses();
-      var invites = getInvites();
-      var settings = loadSettings();
-      var wbook = [], vbook = [], grades = [], library = [];
-      var allUsers = accounts.concat([]);
-      allUsers.forEach(function(u){
-        try { wbook = wbook.concat(JSON.parse(localStorage.getItem('itr_wbook_' + u.id) || '[]').map(function(it){ it._sid = u.id; return it; })); } catch(e){}
-        try { vbook = vbook.concat(JSON.parse(localStorage.getItem('itr_vbook_' + u.id) || '[]').map(function(it){ it._sid = u.id; return it; })); } catch(e){}
-        try { grades = grades.concat(JSON.parse(localStorage.getItem('itr_grades_' + u.id) || '[]').map(function(it){ it._sid = u.id; return it; })); } catch(e){}
-        try { library = library.concat(JSON.parse(localStorage.getItem('itr_library_' + u.id) || '[]').map(function(it){ it._sid = u.id; return it; })); } catch(e){}
-      });
-      var p = Promise.resolve();
-      p = p.then(function(){ return syncTableReplaceAll(cfg.tables.accounts, accounts, function(a){ return { fields: { '账号ID': a.id, '用户名': a.username, '角色': a.role === 'student' ? '学生' : (a.role === 'teacher' ? '教师' : '管理员'), '密码': a.pass || '', '班级ID': a.classId || '', '创建者': a.created_by || '' } }; }); });
-      p = p.then(function(){ return syncTableReplaceAll(cfg.tables.classes, classes, function(c){ return { fields: { '班级ID': c.id, '班级名称': c.name || '', '学员ID列表': Array.isArray(c.students) ? c.students.join(', ') : '', '创建者': c.teacherId || c.created_by || '' } }; }); });
-      p = p.then(function(){ return syncTableReplaceAll(cfg.tables.invites, invites, function(inv){ return { fields: { '邀请码': inv.code, '类型': inv.role === 'teacher' ? '教师' : '学生', '创建者': inv.createdBy || inv.teacherId || '' } }; }); });
-      p = p.then(function(){ return syncTableReplaceAll(cfg.tables.settings, [{_key:'settings', _val: JSON.stringify(settings)}], function(r){ return { fields: { '键': r._key, '值': r._val } }; }); });
-      p = p.then(function(){ return syncTableReplaceAll(cfg.tables.wbook, wbook, function(it){ return { fields: { '学员ID': it._sid, '单词': it.word || it.term || '', '释义': it.meaning || it.def || '', '来源': it.source || it.from || '' } }; }); });
-      p = p.then(function(){ return syncTableReplaceAll(cfg.tables.vbook, vbook, function(it){ return { fields: { '学员ID': it._sid, '单词': it.word || it.term || '', '释义': it.meaning || it.def || '' } }; }); });
-      p = p.then(function(){ return syncTableReplaceAll(cfg.tables.grades, grades, function(it){ return { fields: { '学员ID': it._sid, '文章标题': it.title || it.article || '', '题型': it.type || '', '正确数': it.correct != null ? it.correct : 0, '总题数': it.total != null ? it.total : 0, '正确率': it.rate != null ? it.rate : (it.total ? it.correct / it.total : 0) } }; }); });
-      p = p.then(function(){ return syncTableReplaceAll(cfg.tables.library, library, function(it){ return { fields: { '学员ID': it._sid, '题目标题': it.title || '', '题目内容': String(it.question || '').substring(0, 1000), '答案': String(it.answer || '').substring(0, 500) } }; }); });
-      p.then(function(){ showToast('已同步到飞书多维表格'); }).catch(function(e){ console.error('Feishu sync failed', e); showToast('同步失败，请检查 access token 与网络'); });
-    }, 1200);
+    return new Promise(function(resolve){
+      feishuSyncTimer = setTimeout(function(){
+        apiV2('/feishu/sync', {method:'POST', body:JSON.stringify({dry_run:false})})
+          .then(function(res){ showToast('服务器数据已同步到飞书'); resolve(res); })
+          .catch(function(err){ showToast('飞书同步失败：' + err.message); resolve(null); });
+      }, immediate ? 0 : 800);
+    });
   }
 
 
@@ -4363,13 +4384,13 @@ function showRoleGate() {
     var errEl = document.getElementById('itr-auth-err');
     errEl.textContent = '';
     if (!user || !pass) { errEl.textContent = '请输入用户名和密码'; return; }
-    var acc = findAccount(user, role);
-    if (!acc) { errEl.textContent = '该' + (role==='teacher'?'教师':'学生') + '账号不存在，请先注册'; return; }
-    if (acc.pass !== pass) { errEl.textContent = '密码错误'; return; }
-    setSession({ id: acc.id, username: acc.username, role: acc.role, created_by: acc.created_by || null });
-    hideAuthGate();
-    initRole();
-    showToast('欢迎回来，' + user + '！' + (role==='teacher' ? '（教师模式）' : '（学生模式）'));
+    errEl.textContent = '正在登录…';
+    return apiV2('/auth/login', {method:'POST', body:JSON.stringify({username:user,password:pass,role:role})})
+      .then(function(res){
+        document.getElementById('itr-auth-pass').value='';
+        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData();
+        showToast('欢迎回来，' + user + '！' + (role==='teacher' ? '（教师模式）' : '（学生模式）'));
+      }).catch(function(err){ errEl.textContent=err.message; });
   }
 
   function doRegister() {
@@ -4380,23 +4401,15 @@ function showRoleGate() {
     var errEl = document.getElementById('itr-reg-err');
     errEl.textContent = '';
     if (!user || user.length < 2) { errEl.textContent = '用户名至少2个字符'; return; }
-    if (!pass || pass.length < 3) { errEl.textContent = '密码至少3个字符'; return; }
+    if (!pass || pass.length < 6) { errEl.textContent = '密码至少6个字符'; return; }
     if (!code) { errEl.textContent = '请输入邀请码'; return; }
-    var inv = findInvite(code);
-    if (!inv) { errEl.textContent = '邀请码无效'; return; }
-    if (inv.used) { errEl.textContent = '该邀请码已被使用'; return; }
-    if (inv.role !== role) { errEl.textContent = '该邀请码仅限' + (inv.role==='teacher'?'教师':'学生') + '使用'; return; }
-    if (findAccount(user, role)) { errEl.textContent = '该' + (role==='teacher'?'教师':'学生') + '名已被注册'; return; }
-    var id = uid(role==='teacher'?'tch':'stu');
-    var acc = { id: id, username: user, pass: pass, role: role, created_by: (inv.teacherId || null), classId: (inv.classId || null), createdAt: Date.now() };
-    if (role === 'teacher') acc.teacherId = id;
-    var all = getAccounts(); all.push(acc); saveAccounts(all);
-    inv.used = true; inv.usedBy = id; inv.usedAt = Date.now();
-    var invs = getInvites(); for (var i=0;i<invs.length;i++){ if(invs[i].code===inv.code) invs[i]=inv; } saveInvites(invs);
-    setSession({ id: id, username: user, role: role, created_by: acc.created_by });
-    hideAuthGate();
-    initRole();
-    showToast('注册成功！欢迎，' + user + (role==='teacher' ? ' 老师' : '同学'));
+    errEl.textContent='正在创建服务器账号…';
+    return apiV2('/auth/register', {method:'POST', body:JSON.stringify({username:user,password:pass,role:role,code:code})})
+      .then(function(res){
+        document.getElementById('itr-reg-pass').value='';
+        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData(); syncAllToFeishu();
+        showToast('注册成功！欢迎，' + user + (role==='teacher' ? ' 老师' : '同学'));
+      }).catch(function(err){ errEl.textContent=err.message; });
   }
 
   function logout() {
@@ -4405,6 +4418,7 @@ function showRoleGate() {
     showAuthGate(true);
     $('itr-cards').innerHTML = '';
     $('itr-worksheet').innerHTML = '';
+    apiV2('/auth/logout', {method:'POST', body:'{}'}).catch(function(){});
   }
 
   // Bind auth events
@@ -4587,32 +4601,22 @@ function showRoleGate() {
 
   // Data access helpers (student-scoped)
   function getWBookForStudent(studentId) {
-    try {
-      var raw = localStorage.getItem('itr_wbook_' + studentId);
-      return raw ? JSON.parse(raw) : [];
-    } catch(e) { return []; }
+    return cloneData(ownerData(studentId).wbook, []);
   }
   function getVBookForStudent(studentId) {
-    try {
-      var raw = localStorage.getItem('itr_vbook_' + studentId);
-      return raw ? JSON.parse(raw) : [];
-    } catch(e) { return []; }
+    return cloneData(ownerData(studentId).vbook, []);
   }
   function getGradesForStudent(studentId) {
-    try {
-      var raw = localStorage.getItem('itr_grades_' + studentId);
-      return raw ? JSON.parse(raw) : [];
-    } catch(e) { return []; }
+    return cloneData(ownerData(studentId).grades, []);
   }
 
   function getTeacherLibrary() {
     if (!currentUser) return [];
-    try { return JSON.parse(localStorage.getItem('itr_library_' + currentUser.id) || '[]'); } catch(e) { return []; }
+    return cloneData(ownerData(currentUser.id).library, []);
   }
   function saveTeacherLibrary(a) {
     if (!currentUser) return;
-    try { localStorage.setItem('itr_library_' + currentUser.id, JSON.stringify(a)); } catch(e) {}
-    syncAllToFeishu();
+    persistUserData('library', currentUser.id, a);
   }
   function levelOptions() {
     return LEVELS.map(function(l){ return '<option value="'+l.id+'">'+escapeHtml(l.name)+'</option>'; }).join('');
@@ -4736,17 +4740,17 @@ function showRoleGate() {
   function adminLogin(){
     var u=document.getElementById('itr-admin-user').value.trim();
     var p=document.getElementById('itr-admin-pass').value.trim();
-    var admin=getAdmin(); var err=document.getElementById('itr-admin-err');
-    if(!admin){ err.textContent='管理员账号未初始化'; return; }
-    if(u===admin.username && p===admin.pass){
-      setAdminSession({username:admin.username});
+    var err=document.getElementById('itr-admin-err');
+    if(!u || !p){ err.textContent='请输入管理员账号密码'; return; }
+    err.textContent='正在登录服务器后台…';
+    return apiV2('/admin/login', {method:'POST', body:JSON.stringify({username:u,password:p})}).then(function(res){
+      setAdminSession({authenticated:true}); applyServerState(res.state); cleanVerifiedLegacyAdminCopies();
       var passInput=document.getElementById('itr-admin-pass');
       if(passInput) passInput.value='';
       hideAdminGate(); showAdminPanel();
-    }
-    else { err.textContent='账号或密码错误'; }
+    }).catch(function(ex){ err.textContent=ex.message; });
   }
-  function adminLogout(){ setAdminSession(null); hideAdminPanel(); showAdminGate(); }
+  function adminLogout(){ setAdminSession(null); hideAdminPanel(); showAdminGate(); apiV2('/admin/logout',{method:'POST',body:'{}'}).catch(function(){}); }
 
   function adminOverviewCard(t,v,s){ return '<div class="itr-adm-card"><div class="itr-adm-card-v">'+escapeHtml(String(v))+'</div><div class="itr-adm-card-t">'+escapeHtml(t)+(s?' <span>'+escapeHtml(s)+'</span>':'')+'</div></div>'; }
   function renderAdmin(tab){
@@ -4762,36 +4766,24 @@ function showRoleGate() {
   }
   function renderAdminFeishu(){
     var cfg = getFeishuConfig();
+    var statusText = cfg.authorized ? '已完成 OAuth 授权，凭证由腾讯服务器安全保存。' : '尚未完成 OAuth 授权。';
     var html = '<div class="itr-adm-form"><label>飞书多维表格实时同步</label>'
-      + '<p class="itr-hint">开启后，账号 / 班级 / 邀请码 / 设置 / 词汇收藏 / 词汇书 / 成绩 / 题库会在操作后自动同步到飞书多维表格。</p>'
-      + '<label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;margin:12px 0;"><input type="checkbox" id="itr-feishu-enabled" ' + (cfg.enabled ? 'checked' : '') + ' /> 启用实时同步</label>'
-      + '<div class="itr-field"><label>Access Token（User Access Token）</label><input type="password" id="itr-feishu-token" placeholder="通过飞书 OAuth / API 调试台获取" autocomplete="off" value="' + escapeHtml(cfg.accessToken || '') + '" /></div>'
-      + '<div class="itr-field"><label>Base Token</label><input type="text" id="itr-feishu-base" readonly value="' + escapeHtml(cfg.baseToken) + '" /></div>'
-      + '<div class="itr-row" style="margin-top:10px;"><button type="button" class="itr-btn itr-primary" id="itr-feishu-save">保存配置</button><button type="button" class="itr-btn itr-ghost" id="itr-feishu-sync">立即同步</button></div>'
-      + '<div id="itr-feishu-msg" style="margin-top:8px;font-size:13px;color:var(--itr-muted);"></div>'
-      + '<div class="itr-hint">Access Token 不在多维表格内，需要通过飞书开放平台应用的 OAuth 授权流程获取。注意：网页端直接调用飞书 OpenAPI 可能受 CORS 限制；正式使用应通过后端代理，并由后端安全保存和刷新 Token。</div></div>';
+      + '<p class="itr-hint">腾讯服务器是主数据库；飞书采用保留远端数据的幂等更新，不再执行删表重建。账号密码、API Key、Token 和会话永不写入飞书。</p>'
+      + '<label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;margin:12px 0;"><input type="checkbox" id="itr-feishu-enabled" ' + (cfg.enabled ? 'checked' : '') + ' /> 启用服务器同步</label>'
+      + '<div class="itr-hint" id="itr-feishu-status">' + escapeHtml(statusText) + '</div>'
+      + '<div class="itr-row" style="margin-top:10px;"><button type="button" class="itr-btn itr-primary" id="itr-feishu-save">保存设置</button><button type="button" class="itr-btn itr-ghost" id="itr-feishu-connect">连接飞书 OAuth</button><button type="button" class="itr-btn itr-ghost" id="itr-feishu-sync">立即同步</button></div>'
+      + '<div id="itr-feishu-msg" style="margin-top:8px;font-size:13px;color:var(--itr-muted);"></div></div>';
     var c = document.getElementById('itr-admin-content'); if(c) c.innerHTML = html;
     var msg = document.getElementById('itr-feishu-msg');
-    function saveFeishuCfg(enabled){
-      var s = loadSettingsRaw() || {};
-      s.feishu = { enabled: enabled, accessToken: document.getElementById('itr-feishu-token').value.trim(), baseToken: document.getElementById('itr-feishu-base').value.trim(), tables: FEISHU_DEFAULTS.tables };
-      try { localStorage.setItem('itr_settings', JSON.stringify(s)); } catch(e){}
-    }
     document.getElementById('itr-feishu-save').addEventListener('click', function(){
-      saveFeishuCfg(document.getElementById('itr-feishu-enabled').checked);
-      if(msg) msg.textContent = '配置已保存';
+      var enabled=document.getElementById('itr-feishu-enabled').checked;
+      persistGlobal('feishu',{enabled:enabled}).then(function(){ if(msg) msg.textContent='设置已保存在服务器'; });
     });
+    document.getElementById('itr-feishu-connect').addEventListener('click', function(){ window.location.href='/reading-trainer/feishu/oauth/start'; });
     document.getElementById('itr-feishu-sync').addEventListener('click', function(){
-      var token = document.getElementById('itr-feishu-token').value.trim();
-      if(!token){
-        if(msg) msg.textContent = '未填写 Access Token，尚未发起同步';
-        showToast('请先填写飞书 Access Token');
-        return;
-      }
-      saveFeishuCfg(true);
-      syncAllToFeishu();
+      if(!cfg.authorized){ if(msg) msg.textContent='请先完成飞书 OAuth 授权'; return; }
       if(msg) msg.textContent = '正在同步…';
-      setTimeout(function(){ if(msg) msg.textContent = '同步请求已发送（受网络/CORS影响，结果见控制台）'; }, 1500);
+      syncAllToFeishu(true).then(function(res){ if(msg) msg.textContent=res?'同步完成':'同步失败'; });
     });
   }
   function renderAdminOverview(){
@@ -4800,7 +4792,7 @@ function showRoleGate() {
     var teachers=accs.filter(function(a){return a.role==='teacher';}).length;
     var invs=getInvites(); var active=invs.filter(function(i){return !i.used;}).length;
     var st=getAISettings();
-    var aiTxt=(st&&st.enabled&&st.key)?('已启用：'+(PROVIDERS[st.provider]?PROVIDERS[st.provider].name:st.provider)):'未配置';
+    var aiTxt=(st&&st.enabled&&st.hasKey)?('已启用：'+(PROVIDERS[st.provider]?PROVIDERS[st.provider].name:st.provider)):'未配置';
     var html='<div class="itr-adm-cards">'
       + adminOverviewCard('教师', teachers, '位')
       + adminOverviewCard('学生', students, '位')
@@ -4870,37 +4862,28 @@ function showRoleGate() {
       + '<div class="itr-row"><div class="itr-field" style="flex:1 1 240px;"><label>服务商</label><select id="itr-admin-provider">'+opts+'</select></div>'
       + '<div class="itr-field" style="flex:2 1 320px;"><label>API 地址</label><input type="text" id="itr-admin-endpoint" placeholder="https://..." /></div></div>'
       + '<div class="itr-row"><div class="itr-field" style="flex:1 1 200px;"><label>模型</label><input type="text" id="itr-admin-model" placeholder="模型名" /></div>'
-      + '<div class="itr-field" style="flex:2 1 320px;"><label>API Key</label><input type="password" id="itr-admin-key" placeholder="sk-..." autocomplete="off" /></div></div>'
+      + '<div class="itr-field" style="flex:2 1 320px;"><label>API Key</label><input type="password" id="itr-admin-key" placeholder="' + (st.hasKey?'已安全保存在腾讯服务器；留空表示不更换':'输入新的 API Key') + '" autocomplete="off" /></div></div>'
       + '<label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;"><input type="checkbox" id="itr-admin-enabled" /> 启用该接口（学生生成试题时生效）</label>'
       + '<div class="itr-row" style="margin-top:10px;"><button type="button" class="itr-btn itr-primary" id="itr-admin-ai-save">保存设置</button><button type="button" class="itr-btn itr-ghost" id="itr-admin-ai-test">测试连接</button><span id="itr-admin-ai-msg" style="align-self:center;font-size:13px;color:var(--itr-muted);"></span></div>'
-      + '<div class="itr-hint">密钥仅保存在本机浏览器（localStorage），用于统一调用；切换服务商可一键填入默认地址与模型。</div></div>';
+      + '<div class="itr-hint">密钥只保存在腾讯服务器的私有数据库中，浏览器不会保存或读取完整 Key；所有 AI 请求由服务器代理。</div></div>';
     var c=document.getElementById('itr-admin-content'); if(c) c.innerHTML=html;
     if(st.provider) document.getElementById('itr-admin-provider').value=st.provider;
     if(st.endpoint) document.getElementById('itr-admin-endpoint').value=st.endpoint;
     if(st.model) document.getElementById('itr-admin-model').value=st.model;
-    if(st.key) document.getElementById('itr-admin-key').value=st.key;
     document.getElementById('itr-admin-enabled').checked=!!st.enabled;
     document.getElementById('itr-admin-provider').addEventListener('change', function(){ var p=PROVIDERS[this.value]; if(p){ document.getElementById('itr-admin-endpoint').value=p.endpoint; document.getElementById('itr-admin-model').value=p.model; } });
     document.getElementById('itr-admin-ai-save').addEventListener('click', function(){
-      saveAISettings({ provider:document.getElementById('itr-admin-provider').value, endpoint:document.getElementById('itr-admin-endpoint').value.trim(), model:document.getElementById('itr-admin-model').value.trim(), key:document.getElementById('itr-admin-key').value.trim(), enabled:document.getElementById('itr-admin-enabled').checked });
-      document.getElementById('itr-admin-ai-msg').textContent='已保存。'; showToast('AI 接口设置已保存');
+      var payload={ provider:document.getElementById('itr-admin-provider').value, endpoint:document.getElementById('itr-admin-endpoint').value.trim(), model:document.getElementById('itr-admin-model').value.trim(), key:document.getElementById('itr-admin-key').value.trim(), enabled:document.getElementById('itr-admin-enabled').checked };
+      document.getElementById('itr-admin-ai-msg').textContent='保存中…';
+      saveAISettings(payload).then(function(){ document.getElementById('itr-admin-key').value=''; document.getElementById('itr-admin-ai-msg').textContent='已安全保存到服务器。'; showToast('AI 接口设置已保存'); });
     });
     document.getElementById('itr-admin-ai-test').addEventListener('click', function(){
-      var ep=document.getElementById('itr-admin-endpoint').value.trim(); var key=document.getElementById('itr-admin-key').value.trim();
-      if(!ep||!key){ document.getElementById('itr-admin-ai-msg').textContent='请先填写地址与 Key'; return; }
       document.getElementById('itr-admin-ai-msg').textContent='测试中…';
-      fetch(validateEndpoint(ep), {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+key}, body:JSON.stringify({model:(document.getElementById('itr-admin-model').value.trim()||'gpt-4o-mini'), messages:[{role:'user',content:'ping'}], max_tokens:5})})
-        .then(function(r){ document.getElementById('itr-admin-ai-msg').textContent = r.ok? '连接成功（'+r.status+'）' : '连接异常（'+r.status+'）'; })
+      apiV2('/ai/test', {method:'POST', body:'{}'})
+        .then(function(){ document.getElementById('itr-admin-ai-msg').textContent='连接成功'; })
         .catch(function(e){
           var m=e&&e.message?e.message:String(e);
-          if(/Content Security Policy|CSP|violates|blocked by policy/i.test(m)){
-            document.getElementById('itr-admin-ai-msg').textContent='被浏览器安全策略拦截，请用本地服务器地址打开';
-            showToast('当前预览地址禁止跨域请求，请访问 http://127.0.0.1:18080/ielts-toefl-reader.html');
-          } else if(/Failed to fetch|NetworkError|ERR_|TypeError/i.test(m)){
-            document.getElementById('itr-admin-ai-msg').textContent='网络/扩展拦截：'+m;
-          } else {
-            document.getElementById('itr-admin-ai-msg').textContent='连接失败：'+m;
-          }
+          document.getElementById('itr-admin-ai-msg').textContent='连接失败：'+m;
         });
     });
   }
@@ -5001,7 +4984,19 @@ function showRoleGate() {
     getSelectedQuestionTypes:getSelectedQuestionTypes, buildPrompt:buildPrompt, showClassStudents:showClassStudents,
     currentStudent:currentStudent, buildStudentSelect:buildStudentSelect, doGenerate:doGenerate, apiGenerate:apiGenerate, PROVIDERS:PROVIDERS
   };
-  initRole();
+  function bootstrapBackend(){
+    return apiV2('/bootstrap').then(function(res){
+      applyServerState(res.state); serverAdmin=!!res.admin; setSession(res.user || null);
+      uiMemory.settings=cloneData(loadSettingsRaw(),{});
+      loadSettings(); initTheme(); initRole(); migrateLegacyBrowserData();
+      if (serverAdmin && getParam('feishu_oauth') === 'success') { hideAdminGate(); showAdminPanel(); renderAdmin('feishu'); }
+    }).catch(function(err){
+      clearSession(); showAuthGate(true); hideRoleGate();
+      var target=document.getElementById('itr-auth-err');
+      if(target) target.textContent=(location.protocol==='file:' ? '请通过正式网址 https://kimdu.site/reading-trainer/ 打开，数据只保存在服务器。' : ('服务器连接失败：'+err.message));
+    });
+  }
+  bootstrapBackend();
 })();
 </script>
 </body>

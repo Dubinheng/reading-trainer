@@ -1,5 +1,7 @@
 # 新世纪 Reading Trainer 项目全流程报告
 
+> 2026-08-06 生产更新：本报告第 5、6、8、9 节中的“纯前端/localStorage”结论已经被本次服务器化改造取代。当前架构以腾讯服务器独立 SQLite 数据库 `reading_trainer.db` 为主库，飞书多维表格为非破坏同步副本；浏览器不再写入业务数据、账号、会话或密钥。最新技术验收见 `DATA-PERSISTENCE-REPORT.md`。
+
 > 报告日期：2026-08-02  
 > 当前项目目录：`/Users/apple/Documents/新世纪-项目/reading-trainer/`  
 > 当前主文件：`ielts-toefl-reader.html`  
