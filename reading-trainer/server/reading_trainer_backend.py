@@ -1456,6 +1456,31 @@ def _http_json(response: Any) -> Mapping[str, Any]:
     return value
 
 
+def _ai_upstream_failure(response: Any | None = None, exc: Exception | None = None):
+    """Return a useful admin-safe AI error without reflecting upstream bodies."""
+
+    try:
+        status = int(getattr(response, "status_code", 0) or getattr(response, "status", 0) or 0)
+    except (TypeError, ValueError):
+        status = 0
+    failures = {
+        400: ("AI 服务商拒绝了请求，请核对模型名称。", "ai_request_invalid"),
+        401: ("AI API Key 无效或已撤销，请更换 Key 后重新保存。", "ai_key_invalid"),
+        402: ("AI 服务商账户余额不足，请充值后重试。", "ai_balance_insufficient"),
+        403: ("当前 AI API Key 没有访问该模型的权限。", "ai_model_forbidden"),
+        404: ("AI 接口地址或模型不存在，请核对配置。", "ai_endpoint_not_found"),
+        429: ("AI 服务商请求过于频繁，请稍后重试。", "ai_rate_limited"),
+    }
+    if status in failures:
+        message, code = failures[status]
+        return _error(message, 502, code)
+    if status >= 500:
+        return _error("AI 服务商暂时不可用，请稍后重试。", 502, "ai_provider_unavailable")
+    if exc is not None and "timeout" in type(exc).__name__.lower():
+        return _error("连接 AI 服务商超时，请稍后重试。", 504, "ai_upstream_timeout")
+    return _error("AI 服务商连接失败，请检查 Key、余额和接口配置。", 502, "ai_upstream_error")
+
+
 def _valid_feishu_access_token(app: Any, client: Any = None) -> str:
     cfg = feishu_config(app)
     tokens = _feishu_token_file(app)
@@ -1953,12 +1978,12 @@ def _create_blueprint(store: ReadingTrainerStore):
             )
             result = response.json()
             if not getattr(response, "ok", True):
-                return _error("AI provider request failed", 502, "ai_upstream_error")
+                return _ai_upstream_failure(response)
             return jsonify({"data": sanitize_json(result)})
-        except Exception:
+        except Exception as exc:
             # Do not reflect upstream response bodies or exception text: they
             # may contain provider keys, URLs, or internal paths.
-            return _error("AI provider request failed", 502, "ai_upstream_error")
+            return _ai_upstream_failure(exc=exc)
 
     @bp.post("/ai/test")
     def ai_test():
@@ -1984,10 +2009,10 @@ def _create_blueprint(store: ReadingTrainerStore):
                 timeout=30,
             )
             if not getattr(response, "ok", True):
-                return _error("AI provider request failed", 502, "ai_upstream_error")
+                return _ai_upstream_failure(response)
             return jsonify({"ok": True})
-        except Exception:
-            return _error("AI provider request failed", 502, "ai_upstream_error")
+        except Exception as exc:
+            return _ai_upstream_failure(exc=exc)
 
     @bp.get("/feishu/oauth/status")
     @bp.get("/feishu/status")

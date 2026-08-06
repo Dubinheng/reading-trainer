@@ -381,3 +381,38 @@ def test_expired_feishu_access_token_is_refreshed_only_on_server(tmp_path):
     assert stored["access_token"] == "new-access"
     assert stored["refresh_token"] == "new-refresh"
     assert os.stat(token_path).st_mode & 0o777 == 0o600
+
+
+def test_ai_test_returns_safe_actionable_upstream_error(tmp_path):
+    app = make_app(tmp_path)
+    admin = app.test_client()
+    admin_login(admin)
+    response = admin.put(
+        "/reading-trainer/api/v2/state/ai",
+        json={
+            "value": {
+                "provider": "deepseek",
+                "endpoint": "https://api.deepseek.com/v1/chat/completions",
+                "model": "deepseek-v4-flash",
+                "key": "invalid-secret-key",
+                "enabled": True,
+            }
+        },
+    )
+    assert response.status_code == 200
+
+    class InvalidKeyResponse:
+        ok = False
+        status_code = 401
+
+        def json(self):
+            return {"error": {"message": "upstream body must not be reflected", "secret": "do-not-leak"}}
+
+    app.extensions["reading_trainer_v2"]["http_client"] = lambda *args, **kwargs: InvalidKeyResponse()
+    tested = admin.post("/reading-trainer/api/v2/ai/test", json={})
+    assert tested.status_code == 502
+    body = tested.get_json()
+    assert body["error"]["code"] == "ai_key_invalid"
+    assert "Key" in body["error"]["message"]
+    assert "upstream body" not in json.dumps(body)
+    assert "do-not-leak" not in json.dumps(body)

@@ -4864,7 +4864,7 @@ function showRoleGate() {
       + '<div class="itr-row"><div class="itr-field" style="flex:1 1 200px;"><label>模型</label><input type="text" id="itr-admin-model" placeholder="模型名" /></div>'
       + '<div class="itr-field" style="flex:2 1 320px;"><label>API Key</label><input type="password" id="itr-admin-key" placeholder="' + (st.hasKey?'已安全保存在腾讯服务器；留空表示不更换':'输入新的 API Key') + '" autocomplete="off" /></div></div>'
       + '<label style="display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;"><input type="checkbox" id="itr-admin-enabled" /> 启用该接口（学生生成试题时生效）</label>'
-      + '<div class="itr-row" style="margin-top:10px;"><button type="button" class="itr-btn itr-primary" id="itr-admin-ai-save">保存设置</button><button type="button" class="itr-btn itr-ghost" id="itr-admin-ai-test">测试连接</button><span id="itr-admin-ai-msg" style="align-self:center;font-size:13px;color:var(--itr-muted);"></span></div>'
+      + '<div class="itr-row" style="margin-top:10px;"><button type="button" class="itr-btn itr-primary" id="itr-admin-ai-save">保存设置</button><button type="button" class="itr-btn itr-ghost" id="itr-admin-ai-test">保存并测试</button><span id="itr-admin-ai-msg" style="align-self:center;font-size:13px;color:var(--itr-muted);"></span></div>'
       + '<div class="itr-hint">密钥只保存在腾讯服务器的私有数据库中，浏览器不会保存或读取完整 Key；所有 AI 请求由服务器代理。</div></div>';
     var c=document.getElementById('itr-admin-content'); if(c) c.innerHTML=html;
     if(st.provider) document.getElementById('itr-admin-provider').value=st.provider;
@@ -4872,14 +4872,19 @@ function showRoleGate() {
     if(st.model) document.getElementById('itr-admin-model').value=st.model;
     document.getElementById('itr-admin-enabled').checked=!!st.enabled;
     document.getElementById('itr-admin-provider').addEventListener('change', function(){ var p=PROVIDERS[this.value]; if(p){ document.getElementById('itr-admin-endpoint').value=p.endpoint; document.getElementById('itr-admin-model').value=p.model; } });
+    function readAIForm(){
+      return { provider:document.getElementById('itr-admin-provider').value, endpoint:document.getElementById('itr-admin-endpoint').value.trim(), model:document.getElementById('itr-admin-model').value.trim(), key:document.getElementById('itr-admin-key').value.trim(), enabled:document.getElementById('itr-admin-enabled').checked };
+    }
     document.getElementById('itr-admin-ai-save').addEventListener('click', function(){
-      var payload={ provider:document.getElementById('itr-admin-provider').value, endpoint:document.getElementById('itr-admin-endpoint').value.trim(), model:document.getElementById('itr-admin-model').value.trim(), key:document.getElementById('itr-admin-key').value.trim(), enabled:document.getElementById('itr-admin-enabled').checked };
+      var payload=readAIForm();
       document.getElementById('itr-admin-ai-msg').textContent='保存中…';
       saveAISettings(payload).then(function(){ document.getElementById('itr-admin-key').value=''; document.getElementById('itr-admin-ai-msg').textContent='已安全保存到服务器。'; showToast('AI 接口设置已保存'); });
     });
     document.getElementById('itr-admin-ai-test').addEventListener('click', function(){
-      document.getElementById('itr-admin-ai-msg').textContent='测试中…';
-      apiV2('/ai/test', {method:'POST', body:'{}'})
+      var payload=readAIForm();
+      document.getElementById('itr-admin-ai-msg').textContent='正在保存并测试…';
+      saveAISettings(payload)
+        .then(function(){ document.getElementById('itr-admin-key').value=''; return apiV2('/ai/test', {method:'POST', body:'{}'}); })
         .then(function(){ document.getElementById('itr-admin-ai-msg').textContent='连接成功'; })
         .catch(function(e){
           var m=e&&e.message?e.message:String(e);
