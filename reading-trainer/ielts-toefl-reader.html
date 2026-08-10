@@ -2375,12 +2375,34 @@
     boxes.forEach(function (b) { if (b.checked) out.push(b.value); });
     return out.length ? out : Object.keys(QTYPE_LABELS);
   }
+  var MAX_GENERATION_BATCH_SIZE = 3;
+  /* Keep the browser timeout above the backend's 300-second maximum. */
+  var GENERATION_REQUEST_TIMEOUT_MS = 310000;
+  /* Keep each request's schema focused on the types requested in that batch.
+   * This avoids spending output/context budget on examples the model must not
+   * use, while leaving the quality requirements in buildPrompt unchanged. */
+  var QUESTION_SCHEMA_EXAMPLES = {
+    "multiple-choice": '{"type":"multiple-choice","exam":"IELTS","prompt":"问题(英文)","options":[{"label":"A","text":"..."}],"answer":"B","explanation":"解析"}',
+    "true-false-notgiven": '{"type":"true-false-notgiven","exam":"IELTS","prompt":"陈述句(英文)","answer":"TRUE|FALSE|NOT GIVEN","explanation":"解析"}',
+    "fill-blank": '{"type":"fill-blank","exam":"TOEFL","prompt":"含 _____ 的待补全句子(英文)","answer":"正确答案","explanation":"解析"}',
+    "vocabulary": '{"type":"vocabulary","exam":"TOEFL","prompt":"The word \'X\' in paragraph N is closest in meaning to:","options":[{"label":"A","text":"..."}],"answer":"C","explanation":"解析"}',
+    "matching": '{"type":"matching","exam":"IELTS","prompt":"为每段选择小标题","items":[{"para":"Paragraph 1","heading":"ii. ..."}],"answer":"Paragraph 1 -> ii","explanation":"解析"}',
+    "headings": '{"type":"headings","exam":"IELTS","prompt":"标题匹配","items":[{"para":"第1段","topic":"首句大意"}],"options":["i. ...","ii. ...","iii. ..."],"answer":["ii. ...","i. ..."],"explanation":"解析"}',
+    "diagram": '{"type":"diagram","exam":"IELTS","prompt":"流程图填空","steps":[{"text":"Plants absorb ______ from air.","answer":"carbon dioxide"},{"text":"Sunlight converts it into ______.","answer":"glucose"}],"explanation":"解析"}',
+    "sentence-end": '{"type":"sentence-end","exam":"IELTS","prompt":"句尾配对","beginnings":[{"id":"i","text":"前半句i"}],"endings":[{"id":"A","text":"结尾A"}],"answer":{"i":"A"},"explanation":"解析"}'
+  };
+  function buildQuestionSchemaExamples(types) {
+    return canonicalQuestionTypes(types).map(function (type) {
+      return QUESTION_SCHEMA_EXAMPLES[type];
+    }).filter(Boolean).join(",\n  ");
+  }
   function buildPrompt(article, count, exam, level, types, allocation) {
     var examText = exam === "both" ? "雅思(IELTS)和托福(TOEFL)" : (exam === "IELTS" ? "雅思(IELTS)" : "托福(TOEFL)");
     var selectedTypes = canonicalQuestionTypes(types);
     var exactAllocation = allocation || getGenerationAllocation(count, selectedTypes);
     var typeList = selectedTypes.map(function (t) { return QTYPE_LABELS[t] || t; }).join("、");
     var allocationText = selectedTypes.map(function (t) { return (QTYPE_LABELS[t] || t) + " = " + (exactAllocation && exactAllocation[t] != null ? exactAllocation[t] : 0) + " 道"; }).join("、");
+    var schemaExamples = buildQuestionSchemaExamples(selectedTypes);
     return "你是一位资深的雅思与托福阅读出题专家。请根据下面提供的英文文章，生成 " + count + " 道" + examText + "风格的阅读理解题。\n\n" +
       "【目标难度级别】" + level.name + "。\n" + level.api + "\n\n" +
       "要求：\n" +
@@ -2391,14 +2413,7 @@
       "5. 题干与选项使用英文，解析可使用中文或英文。\n\n" +
       "请严格只返回一个 JSON 对象（不要包含 markdown 代码块标记）：\n" +
       "{\n  \"questions\": [\n" +
-      "  {\"type\":\"multiple-choice\",\"exam\":\"IELTS\",\"prompt\":\"问题(英文)\",\"options\":[{\"label\":\"A\",\"text\":\"...\"}],\"answer\":\"B\",\"explanation\":\"解析\"},\n" +
-      "  {\"type\":\"true-false-notgiven\",\"exam\":\"IELTS\",\"prompt\":\"陈述句(英文)\",\"answer\":\"TRUE|FALSE|NOT GIVEN\",\"explanation\":\"解析\"},\n" +
-      "  {\"type\":\"fill-blank\",\"exam\":\"TOEFL\",\"prompt\":\"含 _____ 的待补全句子(英文)\",\"answer\":\"正确答案\",\"explanation\":\"解析\"},\n" +
-      "  {\"type\":\"vocabulary\",\"exam\":\"TOEFL\",\"prompt\":\"The word 'X' in paragraph N is closest in meaning to:\",\"options\":[{\"label\":\"A\",\"text\":\"...\"}],\"answer\":\"C\",\"explanation\":\"解析\"},\n" +
-      "  {\"type\":\"matching\",\"exam\":\"IELTS\",\"prompt\":\"为每段选择小标题\",\"items\":[{\"para\":\"Paragraph 1\",\"heading\":\"ii. ...\"}],\"answer\":\"Paragraph 1 -> ii\",\"explanation\":\"解析\"},\n" +
-      "  {\"type\":\"headings\",\"exam\":\"IELTS\",\"prompt\":\"标题匹配\",\"items\":[{\"para\":\"第1段\",\"topic\":\"首句大意\"}],\"options\":[\"i. ...\",\"ii. ...\",\"iii. ...\"],\"answer\":[\"ii. ...\",\"i. ...\"],\"explanation\":\"解析\"},\n" +
-      "  {\"type\":\"diagram\",\"exam\":\"IELTS\",\"prompt\":\"流程图填空\",\"steps\":[{\"text\":\"Plants absorb ______ from air.\",\"answer\":\"carbon dioxide\"},{\"text\":\"Sunlight converts it into ______.\",\"answer\":\"glucose\"}],\"explanation\":\"解析\"},\n" +
-      "  {\"type\":\"sentence-end\",\"exam\":\"IELTS\",\"prompt\":\"句尾配对\",\"beginnings\":[{\"id\":\"i\",\"text\":\"前半句i\"}],\"endings\":[{\"id\":\"A\",\"text\":\"结尾A\"}],\"answer\":{\"i\":\"A\"},\"explanation\":\"解析\"}\n" +
+      "  " + schemaExamples + "\n" +
       "  ]\n}\n\n文章如下：\n\"\"\"\n" + article + "\n\"\"\"";
   }
 
@@ -2517,34 +2532,101 @@
     return JSON.parse(text);
   }
 
-  function apiGenerate(article, count, exam, level, types, allocation) {
+  function buildGenerationBatches(count, types, allocation) {
+    var total = clampQuestionCount(count, 6);
+    var selected = canonicalQuestionTypes(types);
+    var exact = allocation;
+    if (!exact || allocationTotal(exact) !== total) exact = getGenerationAllocation(total, selected);
+    var slots = [];
+    selected.forEach(function (type) {
+      var n = Math.max(0, parseInt(exact[type], 10) || 0);
+      for (var i = 0; i < n; i++) slots.push(type);
+    });
+    /* A malformed caller allocation should never produce an undersized plan. */
+    if (slots.length !== total) {
+      exact = getGenerationAllocation(total, selected);
+      slots = [];
+      selected.forEach(function (type) {
+        var n = Math.max(0, parseInt(exact[type], 10) || 0);
+        for (var i = 0; i < n; i++) slots.push(type);
+      });
+    }
+    var batches = [];
+    for (var offset = 0; offset < slots.length; offset += MAX_GENERATION_BATCH_SIZE) {
+      var chunk = slots.slice(offset, offset + MAX_GENERATION_BATCH_SIZE);
+      var batchAllocation = {};
+      chunk.forEach(function (type) { batchAllocation[type] = (batchAllocation[type] || 0) + 1; });
+      batches.push({
+        count: chunk.length,
+        types: selected.filter(function (type) { return batchAllocation[type] > 0; }),
+        allocation: batchAllocation
+      });
+    }
+    return batches;
+  }
+
+  function generationMaxTokens(count, types) {
+    /* One answer/explanation object is relatively verbose; leave enough room
+     * for three questions while keeping each request below the server cap. */
+    var complexity = Math.max(0, canonicalQuestionTypes(types).length - 1) * 150;
+    return Math.min(6000, Math.max(1800, 900 + count * 900 + complexity));
+  }
+
+  function apiGenerateBatch(article, batch, exam, level) {
     var st = getAISettings();
     if (!st || !st.enabled || !st.hasKey) throw new Error("AI 接口尚未由管理员配置，请在「管理者后台 → AI 接口」中设置并保存。");
-    var model = st.model ? st.model.trim() : ((PROVIDERS[st.provider] && PROVIDERS[st.provider].model) || "gpt-4o-mini");
     var body = {
-      model: model,
       messages: [
         { role: "system", content: "You are an expert IELTS/TOEFL reading trainer designer. Always respond with valid JSON only." },
-        { role: "user", content: buildPrompt(article, count, exam, level, types, allocation) }
+        { role: "user", content: buildPrompt(article, batch.count, exam, level, batch.types, batch.allocation) }
       ],
-      temperature: 0.4
+      temperature: 0.4,
+      max_tokens: generationMaxTokens(batch.count, batch.types)
     };
     var p = PROVIDERS[st.provider];
     if (p && p.json) body.response_format = { type: "json_object" };
     var ctrl = new AbortController();
-    var timer = setTimeout(function () { ctrl.abort(); }, 60000);
-    return apiV2('/ai/chat', {
-      method: "POST",
-      body: JSON.stringify(body), signal: ctrl.signal
-    }).then(function (data) {
+    var timer = setTimeout(function () { ctrl.abort(); }, GENERATION_REQUEST_TIMEOUT_MS);
+    var request;
+    try {
+      request = apiV2('/ai/chat', {
+        method: "POST",
+        body: JSON.stringify(body), signal: ctrl.signal
+      });
+    } catch (e) {
       clearTimeout(timer);
+      return Promise.reject(e);
+    }
+    return Promise.resolve(request).then(function (data) {
       data = data.result || data.data || data;
       var content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
       if (!content) throw new Error("API 返回格式异常。");
       var parsed = extractJSON(content);
-      var qs = parsed.questions || [];
-      qs.forEach(function (q, i) { q.id = i + 1; });
-      return qs;
+      var questions = parsed.questions;
+      if (!Array.isArray(questions) || questions.length !== batch.count) {
+        throw new Error("AI 返回的题目数量不完整，请重试生成。");
+      }
+      return questions;
+    }).then(function (value) {
+      clearTimeout(timer);
+      return value;
+    }, function (error) {
+      clearTimeout(timer);
+      throw error;
+    });
+  }
+
+  function apiGenerate(article, count, exam, level, types, allocation) {
+    var batches = buildGenerationBatches(count, types, allocation);
+    return batches.reduce(function (chain, batch) {
+      return chain.then(function (questions) {
+        return apiGenerateBatch(article, batch, exam, level).then(function (batchQuestions) {
+          return questions.concat(Array.isArray(batchQuestions) ? batchQuestions : []);
+        });
+      });
+    }, Promise.resolve([])).then(function (questions) {
+      questions.forEach(function (q, i) { if (q && typeof q === "object") q.id = i + 1; });
+      return questions;
     });
   }
 
@@ -4001,7 +4083,11 @@
     genBtn.classList.add("itr-busy");
     setStatus(currentArtMode === "multi" ? ("正在通过 AI 接口并发生成 " + arts.length + " 篇文章的试题…") : "正在通过 AI 接口生成试题…");
 
-    var tasks = arts.map(function (a) { return apiGenerate(a, count, exam, level, qtypes, allocation); });
+    /* Batches inside one article are sequential; separate articles retain the
+     * existing parallel behavior of multi-article mode. */
+    var tasks = arts.map(function (article) {
+      return apiGenerate(article, count, exam, level, qtypes, allocation);
+    });
 
     Promise.all(tasks).then(function (results) {
       var sections = results.map(function (qs, i) {
@@ -4986,8 +5072,9 @@ function showRoleGate() {
     toggleSelectedStudentId:toggleSelectedStudentId, selectAllStudents:selectAllStudents, clearSelectedStudents:clearSelectedStudents,
     getTargetStudentIds:getTargetStudentIds, addWrongToBook:addWrongToBook, getWBookForStudent:getWBookForStudent, getVBookForStudent:getVBookForStudent,
     addSelectionToVBook:addSelectionToVBook, filterVocabList:filterVocabList, getVocabFilterOptions:getVocabFilterOptions,
-    getSelectedQuestionTypes:getSelectedQuestionTypes, buildPrompt:buildPrompt, showClassStudents:showClassStudents,
-    currentStudent:currentStudent, buildStudentSelect:buildStudentSelect, doGenerate:doGenerate, apiGenerate:apiGenerate, PROVIDERS:PROVIDERS
+    getSelectedQuestionTypes:getSelectedQuestionTypes, buildPrompt:buildPrompt, buildGenerationBatches:buildGenerationBatches,
+    showClassStudents:showClassStudents, currentStudent:currentStudent, buildStudentSelect:buildStudentSelect,
+    doGenerate:doGenerate, apiGenerate:apiGenerate, PROVIDERS:PROVIDERS
   };
   function bootstrapBackend(){
     return apiV2('/bootstrap').then(function(res){

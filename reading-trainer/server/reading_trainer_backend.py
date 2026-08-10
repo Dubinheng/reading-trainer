@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -52,6 +53,17 @@ BUSINESS_SECTIONS = (
     "library",
 )
 ROLES = ("student", "teacher", "admin")
+
+# AI calls can legitimately take longer than a normal API request (especially
+# when a reading passage contains several question types), but the values are
+# still bounded so a client/configuration mistake cannot pin a worker forever.
+AI_TIMEOUT_DEFAULT_SECONDS = 110
+AI_TIMEOUT_MIN_SECONDS = 30
+# The browser waits 310 seconds for one batch.  Keep a margin so the backend
+# can always return its structured timeout error before the browser aborts.
+AI_TIMEOUT_MAX_SECONDS = 300
+AI_MAX_TOKENS_MIN = 256
+AI_MAX_TOKENS_MAX = 8192
 
 # These identifiers are the ones used by the existing remote app.py.  They
 # are identifiers, not credentials.  Every value can be overridden with a
@@ -1481,6 +1493,52 @@ def _ai_upstream_failure(response: Any | None = None, exc: Exception | None = No
     return _error("AI 服务商连接失败，请检查 Key、余额和接口配置。", 502, "ai_upstream_error")
 
 
+def _ai_timeout_seconds(app: Any) -> float:
+    """Read and safely bound the AI upstream timeout.
+
+    ``READING_TRAINER_AI_TIMEOUT`` is the documented setting.  The
+    ``*_SECONDS`` spelling is accepted as a compatibility alias for
+    deployments that prefer explicit units.  Invalid, non-finite, or missing
+    values fall back to the 110 second default.
+    """
+
+    config = getattr(app, "config", {})
+    raw = config.get(
+        "READING_TRAINER_AI_TIMEOUT",
+        config.get(
+            "READING_TRAINER_AI_TIMEOUT_SECONDS",
+            os.environ.get(
+                "READING_TRAINER_AI_TIMEOUT",
+                os.environ.get("READING_TRAINER_AI_TIMEOUT_SECONDS"),
+            ),
+        ),
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = float(AI_TIMEOUT_DEFAULT_SECONDS)
+    if not math.isfinite(value):
+        value = float(AI_TIMEOUT_DEFAULT_SECONDS)
+    return max(float(AI_TIMEOUT_MIN_SECONDS), min(float(AI_TIMEOUT_MAX_SECONDS), value))
+
+
+def _safe_ai_max_tokens(value: Any) -> int | None:
+    """Return a bounded client token budget, or ``None`` when not supplied.
+
+    The proxy owns the model, endpoint, and credentials.  ``max_tokens`` is
+    the only generation control accepted from the browser, and even that is
+    bounded to keep an accidentally huge request from exhausting resources.
+    """
+
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return max(AI_MAX_TOKENS_MIN, min(AI_MAX_TOKENS_MAX, number))
+
+
 def _valid_feishu_access_token(app: Any, client: Any = None) -> str:
     cfg = feishu_config(app)
     tokens = _feishu_token_file(app)
@@ -1964,6 +2022,9 @@ def _create_blueprint(store: ReadingTrainerStore):
         except (TypeError, ValueError):
             return _error("AI temperature is invalid", 400, "invalid_ai_request")
         upstream = {"messages": clean_messages, "model": cfg["model"], "temperature": temperature}
+        max_tokens = _safe_ai_max_tokens(payload.get("max_tokens"))
+        if max_tokens is not None:
+            upstream["max_tokens"] = max_tokens
         if isinstance(payload.get("response_format"), Mapping):
             upstream["response_format"] = sanitize_json(payload["response_format"])
         client = current_app.extensions.get("reading_trainer_v2", {}).get("http_client")
@@ -1974,11 +2035,16 @@ def _create_blueprint(store: ReadingTrainerStore):
                 cfg["endpoint"],
                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + cfg["api_key"]},
                 json=upstream,
-                timeout=65,
+                timeout=_ai_timeout_seconds(current_app),
             )
-            result = response.json()
             if not getattr(response, "ok", True):
                 return _ai_upstream_failure(response)
+            try:
+                result = response.json()
+            except Exception as exc:
+                # A successful response that is not JSON is still an upstream
+                # failure, but its body must never be reflected to the caller.
+                return _ai_upstream_failure(exc=exc)
             return jsonify({"data": sanitize_json(result)})
         except Exception as exc:
             # Do not reflect upstream response bodies or exception text: they

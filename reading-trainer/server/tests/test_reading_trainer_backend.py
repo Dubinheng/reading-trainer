@@ -6,6 +6,7 @@ from flask import Flask
 from server.reading_trainer_backend import (
     BUSINESS_SECTIONS,
     ReadingTrainerStore,
+    _safe_ai_max_tokens,
     _valid_feishu_access_token,
     build_feishu_sync_plan,
     register_reading_trainer_v2,
@@ -416,3 +417,91 @@ def test_ai_test_returns_safe_actionable_upstream_error(tmp_path):
     assert "Key" in body["error"]["message"]
     assert "upstream body" not in json.dumps(body)
     assert "do-not-leak" not in json.dumps(body)
+
+
+def test_ai_chat_bounds_max_tokens_and_uses_configured_timeout(tmp_path):
+    app = make_app(tmp_path)
+    admin = app.test_client()
+    admin_login(admin)
+    configured = admin.put(
+        "/reading-trainer/api/v2/state/ai",
+        json={
+            "value": {
+                "provider": "deepseek",
+                "endpoint": "https://api.deepseek.com/v1/chat/completions",
+                "model": "server-model",
+                "key": "server-secret",
+                "enabled": True,
+            }
+        },
+    )
+    assert configured.status_code == 200
+    app.config["READING_TRAINER_AI_TIMEOUT"] = 112
+    calls = []
+
+    class SuccessResponse:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+    def fake_http(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return SuccessResponse()
+
+    app.extensions["reading_trainer_v2"]["http_client"] = fake_http
+    response = admin.post(
+        "/reading-trainer/api/v2/ai/chat",
+        json={
+            "model": "client-model-must-be-ignored",
+            "endpoint": "https://client.example.invalid/override",
+            "key": "client-key-must-be-ignored",
+            "messages": [{"role": "user", "content": "Reply with JSON."}],
+            "max_tokens": 999999,
+        },
+    )
+    assert response.status_code == 200
+    assert len(calls) == 1
+    kwargs = calls[0][2]
+    assert kwargs["timeout"] == 112
+    assert kwargs["json"]["model"] == "server-model"
+    assert kwargs["json"]["max_tokens"] == 8192
+    assert kwargs["headers"]["Authorization"] == "Bearer server-secret"
+    assert _safe_ai_max_tokens(-100) == 256
+    assert _safe_ai_max_tokens("not-a-number") is None
+
+
+def test_ai_chat_non_json_non_2xx_maps_status_without_parsing_body(tmp_path):
+    app = make_app(tmp_path)
+    admin = app.test_client()
+    admin_login(admin)
+    configured = admin.put(
+        "/reading-trainer/api/v2/state/ai",
+        json={
+            "value": {
+                "endpoint": "https://api.example.com/v1/chat/completions",
+                "model": "example-model",
+                "key": "example-secret",
+                "enabled": True,
+            }
+        },
+    )
+    assert configured.status_code == 200
+
+    class HtmlErrorResponse:
+        ok = False
+        status_code = 502
+
+        def json(self):
+            raise AssertionError("HTML error body must not be parsed")
+
+    app.extensions["reading_trainer_v2"]["http_client"] = lambda *args, **kwargs: HtmlErrorResponse()
+    response = admin.post(
+        "/reading-trainer/api/v2/ai/chat",
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert response.status_code == 502
+    body = response.get_json()
+    assert body["error"]["code"] == "ai_provider_unavailable"
+    assert "HTML" not in json.dumps(body)
