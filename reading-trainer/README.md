@@ -31,6 +31,15 @@ python3 scripts/check_persistence_contract.py
 python3 -m pytest -q server/tests
 ```
 
+每次腾讯服务器上的宿主 `app.py` 更新或重启后，还必须运行：
+
+```bash
+python3 scripts/check_production_health.py
+```
+
+该检查会同时验证正式网页和 `/reading-trainer/api/v2/bootstrap`。如果接口返回
+404，说明宿主程序遗漏了 `register_reading_trainer_v2(app)`，不能把这次部署视为成功。
+
 `WORKBUDDY_REPORT.md` 和 `REPORT.md` 中关于 localStorage 的段落属于改造前历史记录，不能作为当前架构依据。
 
 ## 验证截图
