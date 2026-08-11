@@ -267,6 +267,46 @@ def test_feishu_plan_is_sanitized_idempotent_and_never_deletes_remote_only(tmp_p
     assert response.get_json()["plan"]["totals"]["deletes"] == 0
 
 
+def test_live_feishu_sync_skips_unconfigured_optional_table(tmp_path):
+    app = make_app(tmp_path)
+    app.config.update(
+        READING_TRAINER_FEISHU_ENABLED=True,
+        READING_TRAINER_FEISHU_ACCESS_TOKEN="test-access-token",
+        READING_TRAINER_FEISHU_TOKEN_FILE=str(tmp_path / "missing-feishu-token.json"),
+    )
+    admin_client = app.test_client()
+    admin_login(admin_client)
+    requested_urls = []
+
+    def fake_http(method, url, **kwargs):
+        requested_urls.append(url)
+        if url.endswith("/records"):
+            return {"code": 0, "data": {"items": [], "has_more": False}}
+        if url.endswith("/fields"):
+            return {
+                "code": 0,
+                "data": {
+                    "items": [
+                        {"field_name": "业务键"},
+                        {"field_name": "数据类型"},
+                        {"field_name": "数据JSON"},
+                    ]
+                },
+            }
+        raise AssertionError(f"unexpected Feishu request: {method} {url}")
+
+    app.extensions["reading_trainer_v2"]["http_client"] = fake_http
+    response = admin_client.post(
+        "/reading-trainer/api/v2/feishu/sync",
+        json={"dry_run": False},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["executed"]["deletes"] == 0
+    assert requested_urls
+    assert all("/tables//" not in url for url in requested_urls)
+
+
 def test_store_rejects_resume_database_path(tmp_path):
     app = Flask("path-test")
     try:

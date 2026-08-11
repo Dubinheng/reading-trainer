@@ -4055,6 +4055,12 @@ def _create_blueprint(store: ReadingTrainerStore):
             if supplied_remote is None:
                 remote = {}
                 for section, table_id in cfg["tables"].items():
+                    # Optional mirrors (currently assignments) deliberately
+                    # use an empty table id until production configures a
+                    # destination.  Skipping them keeps the remaining Feishu
+                    # tables syncable instead of requesting ``tables//records``.
+                    if not table_id:
+                        continue
                     if section not in BUSINESS_SECTIONS and section not in ("accounts", "classes", "invites", "assignments"):
                         continue
                     table_url = base_url + "/" + str(table_id) + "/records"
