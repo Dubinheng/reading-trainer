@@ -547,6 +547,70 @@ class ReadingTrainerStore:
             )
         return clean
 
+    def upsert_vbook_item(self, owner_id: str, item: Mapping[str, Any]) -> dict[str, Any]:
+        """Append one vocabulary item atomically and de-duplicate by word.
+
+        The browser historically replaced the whole ``vbook`` document.  A
+        dedicated item write prevents two tabs (or an assignment and the
+        practice page) from losing each other's additions while preserving the
+        existing document/Feishu storage shape.
+        """
+
+        owner_id = _safe_text(owner_id, 200)
+        if not owner_id:
+            raise ValueError("owner id is required")
+        word = _safe_text(item.get("word") or item.get("term"), 200).strip()
+        if not word:
+            raise ValueError("word is required")
+        clean_item = sanitize_json(dict(item))
+        if not isinstance(clean_item, Mapping):
+            raise ValueError("vocabulary item is invalid")
+        clean_item = dict(clean_item)
+        clean_item["word"] = word
+        clean_item.setdefault("box", 1)
+        clean_item.setdefault("ts", int(time.time() * 1000))
+        word_key = word.casefold()
+
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT data_json FROM documents WHERE owner_id = ? AND section = ?",
+                (owner_id, "vbook"),
+            ).fetchone()
+            try:
+                book = json.loads(row[0]) if row else []
+            except (TypeError, ValueError):
+                book = []
+            if not isinstance(book, list):
+                book = []
+
+            for existing in book:
+                if not isinstance(existing, Mapping):
+                    continue
+                existing_word = _safe_text(existing.get("word") or existing.get("term"), 200).strip()
+                if existing_word.casefold() == word_key:
+                    return {
+                        "created": False,
+                        "item": sanitize_json(dict(existing)),
+                        "data": sanitize_json(book),
+                    }
+
+            updated = [clean_item, *book]
+            serialized = _json_dumps(updated)
+            if len(serialized.encode("utf-8")) > 5 * 1024 * 1024:
+                raise ValueError("document is too large")
+            now = _now()
+            connection.execute(
+                "INSERT INTO documents(owner_id, section, data_json, updated_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(owner_id, section) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at",
+                (owner_id, "vbook", serialized, now),
+            )
+            return {
+                "created": True,
+                "item": sanitize_json(clean_item),
+                "data": sanitize_json(updated),
+            }
+
     def list_documents(self, sections: Iterable[str] | None = None) -> list[dict[str, Any]]:
         values = tuple(sections or ())
         with self.connect() as connection:
@@ -3007,6 +3071,51 @@ def _create_blueprint(store: ReadingTrainerStore):
                 session.pop(key, None)
         response = make_response(jsonify({"ok": True}), 200)
         return _clear_session_cookie(response)
+
+    @bp.post("/vbook/items")
+    def vocabulary_item_create():
+        """Append one server-confirmed, idempotent vocabulary item."""
+
+        user, error = _auth_required(store, ("student", "teacher", "admin"))
+        if error:
+            return error
+        payload = _json_body()
+        payload = payload if isinstance(payload, Mapping) else {}
+        owner_id = _safe_text(payload.get("ownerId") or payload.get("owner_id") or user.get("id"), 200)
+        if not owner_id or not _authorized_owner(store, user, owner_id):
+            return _error("insufficient permissions", 403, "forbidden")
+        item = dict(payload)
+        item.pop("ownerId", None)
+        item.pop("owner_id", None)
+        source_type = _safe_text(item.get("sourceType") or item.get("source_type"), 50).lower()
+        assignment_id = _safe_text(item.get("assignmentId") or item.get("assignment_id"), 200)
+        if source_type == "assignment" and not assignment_id:
+            return _error("assignment id is required", 400, "invalid_assignment_source")
+        if source_type == "assignment":
+            owner = store.get_user(owner_id)
+            if owner and owner.get("role") == "student":
+                assignment = store.get_assignment(assignment_id, student_id=owner_id)
+            elif owner and owner.get("role") == "teacher":
+                assignment = store.get_assignment(assignment_id, teacher_id=owner_id)
+            else:
+                assignment = None
+            if assignment is None:
+                return _error("assignment is not visible to this student", 403, "forbidden_assignment")
+        try:
+            saved = store.upsert_vbook_item(owner_id, item)
+        except (TypeError, ValueError):
+            return _error("vocabulary item is invalid", 400, "invalid_vocabulary")
+        return jsonify(
+            {
+                "ok": True,
+                "created": bool(saved.get("created")),
+                "owner_id": owner_id,
+                "section": "vbook",
+                "item": saved.get("item"),
+                "data": saved.get("data", []),
+                "state": _state_snapshot(store, user, current_app),
+            }
+        )
 
     # ------------------------------------------------------------------
     # Teacher/student assignments

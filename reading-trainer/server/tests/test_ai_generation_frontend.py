@@ -165,6 +165,55 @@ process.stdout.write(JSON.stringify(cases));
     assert json.loads(result.stdout) == [True, False, False, False]
 
 
+def test_assignment_vocabulary_reuses_server_book_and_source_article():
+    source = FRONTEND.read_text(encoding="utf-8")
+    render_source = _function_source(source, "renderAssignmentAnswer", "openAssignment")
+    add_source = _function_source(source, "addAssignmentSelection", "renderAssignmentAnswer")
+    persist_source = _function_source(source, "addVocabToBook", "renderVBook")
+    assert "itr-assignment-vocab-extract" in render_source
+    assert "itr-assignment-vocab-add" in render_source
+    assert "itr-assignment-source-text" in render_source
+    assert "assignmentSelectionFromArticle" in render_source
+    assert "assignmentVocabMetadata" in add_source
+    assert "sourceType: 'assignment'" in source
+    assert "assignmentId: assignmentId(detail)" in source
+    assert "apiV2('/vbook/items'" in persist_source
+    assert "res.ok !== true" in persist_source
+    assert "服务器未确认生词保存" in persist_source
+
+
+def test_assignment_article_selection_keeps_phrase_context():
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required to execute the embedded selection helper")
+    source = FRONTEND.read_text(encoding="utf-8")
+    selection_source = _function_source(source, "assignmentSelectionFromArticle", "assignmentVocabMetadata")
+    harness = f"""
+var assignmentState = {{ vocabSelection: null }};
+var fakeNode = {{ nodeType: 1 }};
+var sourceEl = {{ contains: function (node) {{ return node === fakeNode; }} }};
+var window = {{ getSelection: function () {{ return {{
+  rangeCount: 1,
+  isCollapsed: false,
+  toString: function () {{ return 'valuable knowledge'; }},
+  getRangeAt: function () {{ return {{ commonAncestorContainer: fakeNode }}; }}
+}}; }} }};
+function splitSentences(text) {{ return text.match(/[^.!?]+[.!?]+/g).map(function (item) {{ return item.trim(); }}); }}
+{selection_source}
+var result = assignmentSelectionFromArticle(sourceEl, [{{
+  text: 'Students preserve valuable knowledge. Another sentence follows.',
+  articleIndex: 2
+}}]);
+process.stdout.write(JSON.stringify(result));
+"""
+    result = subprocess.run(["node", "-e", harness], cwd=ROOT, capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == {
+        "word": "valuable knowledge",
+        "ctx": "Students preserve valuable knowledge.",
+        "articleIndex": 2,
+        "invalid": False,
+    }
+
+
 def test_pdf_export_has_watermark_controls_and_no_heading_answer_leak():
     source = FRONTEND.read_text(encoding="utf-8")
     worksheet_source = _function_source(source, "worksheetQuestion", "worksheetAnswerSheet")

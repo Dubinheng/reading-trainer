@@ -1217,6 +1217,12 @@
   #itr-app .itr-assignment-answer { margin-top:16px; border-top:1px solid var(--itr-border); padding-top:16px; }
   #itr-app .itr-assignment-answer .itr-q { animation:none; }
   #itr-app .itr-assignment-result { margin-top:14px; padding:12px 14px; border-radius:10px; background:var(--itr-primary-soft); color:var(--itr-primary-on-soft); font-size:14px; }
+  #itr-app .itr-assignment-source-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  #itr-app .itr-assignment-source-tools .itr-hint { margin:0; flex:1 1 260px; }
+  #itr-app .itr-assignment-vocab { display:none; margin-top:12px; padding:12px; border:1px solid var(--itr-border); border-radius:12px; background:var(--itr-fill); }
+  #itr-app .itr-assignment-vocab.open { display:block; }
+  #itr-app .itr-assignment-vocab .itr-vocab-item { background:var(--itr-card); }
+  #itr-app .itr-assignment-vocab .itr-vocab-item .itr-vbtn.busy { opacity:.65; pointer-events:none; }
   #itr-app .itr-assignment-compose { margin-top:12px; padding:14px; border:1px solid var(--itr-border); border-radius:var(--itr-r-md); background:var(--itr-fill); }
   #itr-app .itr-assignment-compose .itr-row { align-items:flex-end; }
   #itr-app .itr-assignment-unread { display:inline-flex; min-width:18px; height:18px; align-items:center; justify-content:center; padding:0 5px; border-radius:999px; background:var(--itr-red); color:#fff; font-size:11px; font-weight:700; }
@@ -3695,7 +3701,10 @@
   }
 
   // ---------- Assignments (server-backed, in-memory UI state only) ----------
-  var assignmentState = { list: [], filter: "all", active: null, summary: {}, unread: 0, loading: false };
+  var assignmentState = {
+    list: [], filter: "all", active: null, summary: {}, unread: 0, loading: false,
+    vocabSelection: null, vocabExtract: null, vocabFilters: {}
+  };
   var assignmentRefreshTimer = null;
   function assignmentPath(id, suffix) {
     return '/assignments/' + encodeURIComponent(String(id)) + (suffix || '');
@@ -3868,12 +3877,19 @@
       var deadline = deadlineInput ? new Date(deadlineInput).toISOString() : null;
       var questions = assignmentQuestionPayload(sections);
       var assignmentRequestId = uid('asgn');
+      var assignmentSettings = {
+        level: latestGenerated && latestGenerated.level,
+        exam: latestGenerated && latestGenerated.exam,
+        showArticle: latestGenerated && latestGenerated.showArticle
+      };
       var payload = {
         id: assignmentRequestId,
         title: title, description: description, dueAt: deadline, deadline: deadline,
         studentIds: selected, student_ids: selected,
         questions: questions,
         sections: cloneData(sections, []),
+        settings: assignmentSettings,
+        generationSettings: assignmentSettings,
         source: { type: 'reading-trainer', level: latestGenerated && latestGenerated.level, exam: latestGenerated && latestGenerated.exam }
       };
       var send = $('itr-assignment-send-confirm'); send.disabled = true; send.classList.add('itr-busy'); send.textContent = '正在发送…';
@@ -4097,6 +4113,171 @@
       showToast('提交作业失败：' + err.message);
     });
   }
+  function assignmentArticleEntries(detail) {
+    var sections = detail && Array.isArray(detail.sections) ? detail.sections : [];
+    var entries = sections.map(function (section, index) {
+      var text = section && (section.article || section.passage || section.text || '');
+      return {
+        text: String(text || '').trim(),
+        title: String(section && (section.title || section.name) || (sections.length > 1 ? '文章 ' + (index + 1) : '生词表')),
+        articleIndex: index
+      };
+    }).filter(function (entry) { return !!entry.text; });
+    if (!entries.length) {
+      var text = detail && (detail.article || detail.passage || detail.text || '');
+      if (text) entries.push({ text: String(text).trim(), title: '生词表', articleIndex: 0 });
+    }
+    return entries;
+  }
+  function assignmentVocabLevel(detail, entries) {
+    var settings = detail && (detail.settings || detail.generationSettings || detail.generation_settings || detail.source) || {};
+    var raw = settings && (settings.level != null ? settings.level : settings.difficulty);
+    if (raw && typeof raw === 'object') raw = raw.id;
+    var parsed = parseInt(raw, 10);
+    if (parsed >= 1 && parsed <= LEVELS.length) return LEVELS[parsed - 1];
+    var assessment = assessDifficulty((entries || []).map(function (entry) { return entry.text; }).join('\n\n'));
+    if (assessment.indexOf('简单') === 0) return LEVELS[1];
+    if (assessment.indexOf('中等') === 0) return LEVELS[2];
+    return LEVELS[4];
+  }
+  function assignmentSelectionFromArticle(sourceEl, entries) {
+    var selection = window.getSelection ? window.getSelection() : null;
+    if (!selection || selection.rangeCount < 1 || selection.isCollapsed) return assignmentState.vocabSelection;
+    var range = selection.getRangeAt(0);
+    var common = range.commonAncestorContainer;
+    var node = common && common.nodeType === 1 ? common : common && common.parentNode;
+    if (!node || !sourceEl.contains(node)) return assignmentState.vocabSelection;
+    var word = String(selection.toString() || '').replace(/\s+/g, ' ').trim();
+    word = word.replace(/^[^A-Za-z]+|[^A-Za-z'-]+$/g, '').trim();
+    if (!/^[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,4}$/.test(word) || word.length > 80) {
+      assignmentState.vocabSelection = { invalid: true, word: word };
+      return assignmentState.vocabSelection;
+    }
+    var lower = word.toLowerCase(), articleIndex = 0, context = '';
+    (entries || []).some(function (entry, index) {
+      if (entry.text.toLowerCase().indexOf(lower) === -1) return false;
+      articleIndex = entry.articleIndex != null ? entry.articleIndex : index;
+      var sentences = splitSentences(entry.text);
+      context = sentences.filter(function (sentence) { return sentence.toLowerCase().indexOf(lower) !== -1; })[0] || '';
+      return true;
+    });
+    assignmentState.vocabSelection = { word: word, ctx: context, articleIndex: articleIndex, invalid: false };
+    return assignmentState.vocabSelection;
+  }
+  function assignmentVocabMetadata(detail, articleIndex) {
+    return {
+      sourceType: 'assignment',
+      assignmentId: assignmentId(detail),
+      assignmentTitle: assignmentTitle(detail),
+      articleIndex: articleIndex == null ? 0 : articleIndex
+    };
+  }
+  function assignmentVocabFilter(list) {
+    var opts = assignmentState.vocabFilters || {}, inBook = {};
+    (getVBook() || []).forEach(function (item) { if (item && item.word) inBook[String(item.word).toLowerCase()] = true; });
+    return (list || []).filter(function (item) {
+      var word = String(item.word || ''), lower = word.toLowerCase();
+      if (opts.properOnly && !(word[0] && word[0] === word[0].toUpperCase() && word.length >= 4 && !WORD_DICT[lower])) return false;
+      if (opts.unknownOnly && item.zh && String(item.zh).trim()) return false;
+      if (opts.notInBook && inBook[lower]) return false;
+      if (opts.longOnly && word.length < 10) return false;
+      return true;
+    });
+  }
+  function renderAssignmentVocabPanel() {
+    var panel = $('itr-assignment-vocab'), state = assignmentState.vocabExtract;
+    if (!panel || !state) return;
+    var opts = assignmentState.vocabFilters || {};
+    var checked = function (key) { return opts[key] ? ' checked' : ''; };
+    var html = '<div class="itr-vocab-filters"><span class="itr-vocab-filters-label">筛选</span>' +
+      '<label class="itr-chip-check"><input type="checkbox" data-assignment-vocab-filter="properOnly"' + checked('properOnly') + '> 仅专有名词</label>' +
+      '<label class="itr-chip-check"><input type="checkbox" data-assignment-vocab-filter="unknownOnly"' + checked('unknownOnly') + '> 仅未收录词</label>' +
+      '<label class="itr-chip-check"><input type="checkbox" data-assignment-vocab-filter="notInBook"' + checked('notInBook') + '> 词汇收藏未收录</label>' +
+      '<label class="itr-chip-check"><input type="checkbox" data-assignment-vocab-filter="longOnly"' + checked('longOnly') + '> 仅长词（≥10字母）</label></div>';
+    state.articles.forEach(function (article, index) {
+      var list = assignmentVocabFilter(article._list || []);
+      html += '<div class="itr-vocab-sec" data-assignment-vocab-article="' + index + '"><div class="itr-vocab-h">' + ICONS.books + ' ' + escapeHtml(article.title) +
+        ' <span style="color:var(--itr-muted);font-weight:400;font-size:12px;">（共 ' + list.length + ' 个）</span></div>';
+      if (list.length) html += '<div class="itr-vocab-list">' + list.map(vocabItemHtml).join('') + '</div>';
+      else html += '<div class="itr-vocab-empty">未提取到符合筛选条件的生词。</div>';
+      html += '</div>';
+    });
+    html += '<div class="itr-vocab-note">提取结果来自本作业原文；添加后保存到当前学生的“词汇复习”。' +
+      (state.usedAI ? ' 已使用服务器 AI 补全部分释义。' : '') + '</div>';
+    panel.innerHTML = html; panel.classList.add('open');
+    var savedWords = {};
+    (getVBook() || []).forEach(function (item) { if (item && item.word) savedWords[String(item.word).toLowerCase()] = true; });
+    panel.querySelectorAll('.itr-vocab-item').forEach(function (item) {
+      var wordEl = item.querySelector('.w'), savedButton = item.querySelector('.itr-vbtn');
+      if (wordEl && savedButton && savedWords[wordEl.textContent.trim().toLowerCase()]) {
+        savedButton.textContent = '已收藏'; savedButton.disabled = true; savedButton.classList.add('added');
+      }
+    });
+    panel.querySelectorAll('[data-assignment-vocab-filter]').forEach(function (input) {
+      input.addEventListener('change', function () {
+        assignmentState.vocabFilters[input.getAttribute('data-assignment-vocab-filter')] = input.checked;
+        renderAssignmentVocabPanel();
+      });
+    });
+    panel.querySelectorAll('.itr-vbtn').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var item = button.closest('.itr-vocab-item'), section = button.closest('[data-assignment-vocab-article]');
+        var word = item.querySelector('.w').textContent.trim();
+        var pos = item.querySelector('.p'), zh = item.querySelector('.z'), ctx = item.querySelector('.c');
+        var stateIndex = parseInt(section.getAttribute('data-assignment-vocab-article'), 10) || 0;
+        var articleIndex = state.articles[stateIndex] && state.articles[stateIndex].articleIndex != null ? state.articles[stateIndex].articleIndex : stateIndex;
+        button.disabled = true; button.classList.add('busy'); button.textContent = '保存中…';
+        addVocabToBook(word, pos ? pos.textContent.trim() : '', zh ? zh.textContent.trim() : '', ctx ? ctx.textContent.trim() : '', currentUser.id, assignmentVocabMetadata(state.detail, articleIndex))
+          .then(function (result) {
+            button.textContent = result.created ? '已加入' : '已收藏'; button.classList.add('added');
+            showToast(result.created ? ('已加入词汇收藏：' + word) : ('「' + word + '」已在词汇收藏中。'), 'success');
+          }).catch(function (err) {
+            button.disabled = false; button.classList.remove('busy'); button.textContent = '＋添加生词';
+            showToast('添加生词失败：' + err.message, 'error');
+          });
+      });
+    });
+  }
+  function extractAssignmentVocab(detail) {
+    var entries = assignmentArticleEntries(detail), panel = $('itr-assignment-vocab'), button = $('itr-assignment-vocab-extract');
+    if (!entries.length) { showToast('这份作业没有可提取的英语原文。', 'error'); return; }
+    var level = assignmentVocabLevel(detail, entries), ai = getAISettings();
+    var useAI = !!(ai && ai.enabled && ai.hasKey);
+    if (button) { button.disabled = true; button.classList.add('itr-busy'); button.textContent = '正在提取…'; }
+    if (panel) { panel.classList.add('open'); panel.innerHTML = '<div class="itr-status"><span class="itr-spinner"></span>正在提取作业生词…</div>'; }
+    var tasks = entries.map(function (entry) {
+      var list = extractVocab(entry.text, level);
+      if (!useAI) { entry._list = list; return Promise.resolve(list); }
+      return aiDefineVocab(list).then(function (enriched) { entry._list = enriched; return enriched; });
+    });
+    Promise.all(tasks).then(function () {
+      assignmentState.vocabExtract = { detail: detail, articles: entries, level: level, usedAI: useAI };
+      renderAssignmentVocabPanel();
+      showToast('作业生词提取完成。', 'success');
+    }).catch(function (err) {
+      showToast('生词提取失败：' + err.message, 'error');
+      if (panel) { panel.classList.remove('open'); panel.innerHTML = ''; }
+    }).finally(function () {
+      if (button) { button.disabled = false; button.classList.remove('itr-busy'); button.textContent = '生词提取'; }
+    });
+  }
+  function addAssignmentSelection(detail, sourceEl) {
+    var entries = assignmentArticleEntries(detail);
+    var selected = assignmentSelectionFromArticle(sourceEl, entries) || assignmentState.vocabSelection;
+    if (!selected || !selected.word) { showToast('请先在作业原文中选中一个英文单词或短语。', 'error'); return; }
+    if (selected.invalid) { showToast('请选择1至5个英文单词组成的生词或短语。', 'error'); return; }
+    var entry = selected.word.indexOf(' ') === -1 ? lookupWord(selected.word.toLowerCase()) : null;
+    var button = $('itr-assignment-vocab-add');
+    if (button) { button.disabled = true; button.classList.add('itr-busy'); button.textContent = '保存中…'; }
+    addVocabToBook(selected.word, entry ? entry.pos : '', entry ? entry.zh : '', selected.ctx || '', currentUser.id, assignmentVocabMetadata(detail, selected.articleIndex))
+      .then(function (result) {
+        showToast(result.created ? ('已加入词汇收藏：' + selected.word) : ('「' + selected.word + '」已在词汇收藏中。'), 'success');
+      }).catch(function (err) {
+        showToast('添加生词失败：' + err.message, 'error');
+      }).finally(function () {
+        if (button) { button.disabled = false; button.classList.remove('itr-busy'); button.textContent = '添加生词'; }
+      });
+  }
   function renderAssignmentAnswer(detail) {
     var answerEl = $('itr-assignment-answer'); if (!answerEl) return;
     var questions = assignmentQuestions(detail).map(normalizeAssignmentQuestion);
@@ -4107,12 +4288,26 @@
     }).filter(Boolean) : [];
     var article = detail.article || detail.passage || detail.text || sectionArticles.join('\n\n');
     var html = '<div class="itr-book-head"><h3 style="margin:0;">' + escapeHtml(title) + '</h3><span class="spacer"></span><button type="button" class="itr-link" id="itr-assignment-close">返回作业列表</button></div>';
-    if (article) html += '<div class="itr-card" style="margin-top:12px;"><label>原文</label>' + renderArticle(String(article)) + '</div>';
+    if (article) html += '<div class="itr-card" id="itr-assignment-source-card" style="margin-top:12px;"><label>原文</label>' +
+      '<div id="itr-assignment-source-text">' + renderArticle(String(article)) + '</div>' +
+      '<div class="itr-assignment-source-tools"><button type="button" class="itr-btn itr-ghost" id="itr-assignment-vocab-extract">' + ICONS.books + ' 生词提取</button>' +
+      '<button type="button" class="itr-btn itr-ghost" id="itr-assignment-vocab-add">＋ 添加生词</button>' +
+      '<span class="itr-hint">选中原文中的英文单词或短语后，点击“添加生词”。</span></div>' +
+      '<div class="itr-assignment-vocab" id="itr-assignment-vocab"></div></div>';
     if (!questions.length) html += '<div class="itr-book-empty">该作业暂未返回可答题内容，请刷新后重试。</div>';
     html += '<div class="itr-assignment-question-list">' + questions.map(function (q) { return renderQuestion(q, { assignment: true }); }).join('') + '</div>';
     if (questions.length && !assignmentIsCompleted(detail)) html += '<div class="itr-btns"><button type="button" class="itr-btn itr-primary" id="itr-assignment-submit">提交批改与分析</button></div>';
     answerEl.innerHTML = html;
-    answerEl.querySelector('#itr-assignment-close').addEventListener('click', function () { answerEl.style.display = 'none'; assignmentState.active = null; });
+    assignmentState.vocabSelection = null; assignmentState.vocabExtract = null; assignmentState.vocabFilters = {};
+    answerEl.querySelector('#itr-assignment-close').addEventListener('click', function () { answerEl.style.display = 'none'; assignmentState.active = null; assignmentState.vocabSelection = null; assignmentState.vocabExtract = null; });
+    var sourceEl = answerEl.querySelector('#itr-assignment-source-text');
+    if (sourceEl) {
+      ['mouseup', 'keyup', 'touchend'].forEach(function (eventName) {
+        sourceEl.addEventListener(eventName, function () { assignmentSelectionFromArticle(sourceEl, assignmentArticleEntries(detail)); });
+      });
+      answerEl.querySelector('#itr-assignment-vocab-extract').addEventListener('click', function () { extractAssignmentVocab(detail); });
+      answerEl.querySelector('#itr-assignment-vocab-add').addEventListener('click', function () { addAssignmentSelection(detail, sourceEl); });
+    }
     var cards = Array.prototype.slice.call(answerEl.querySelectorAll('.itr-q'));
     cards.forEach(function (card, i) { bindQuestion(card, questions[i], { assignmentId: assignmentId(detail) }); });
     if (assignmentIsCompleted(detail)) {
@@ -4269,12 +4464,18 @@
         var zEl = item.querySelector(".z");
         var cEl = item.querySelector(".c");
         var tids = getTargetStudentIds();
-        if (tids.length) {
-          tids.forEach(function (sid) { addVocabToBook(word, pEl ? pEl.textContent.trim() : "", zEl ? zEl.textContent.trim() : "", cEl ? cEl.textContent.trim() : "", sid); });
-        } else {
-          addVocabToBook(word, pEl ? pEl.textContent.trim() : "", zEl ? zEl.textContent.trim() : "", cEl ? cEl.textContent.trim() : "");
-        }
-        b.textContent = "已加入"; b.classList.add("added");
+        if (!tids.length && currentUser && currentUser.id) tids = [currentUser.id];
+        b.disabled = true; b.classList.add('busy'); b.textContent = '保存中…';
+        Promise.all(tids.map(function (sid) {
+          return addVocabToBook(word, pEl ? pEl.textContent.trim() : "", zEl ? zEl.textContent.trim() : "", cEl ? cEl.textContent.trim() : "", sid, { sourceType:'practice' });
+        })).then(function (results) {
+          b.textContent = results.some(function (result) { return result.created; }) ? "已加入" : "已收藏";
+          b.classList.remove('busy'); b.classList.add("added");
+          setStatus('已保存到服务器词汇收藏：' + word, false);
+        }).catch(function (err) {
+          b.disabled = false; b.classList.remove('busy'); b.textContent = '＋添加生词';
+          showToast('添加生词失败：' + err.message, 'error');
+        });
       });
     });
     panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -4331,12 +4532,12 @@
     var ctx = "";
     for (var i = 0; i < sents.length; i++) { if (sents[i].toLowerCase().indexOf(lw) !== -1) { ctx = sents[i]; break; } }
     var tids = getTargetStudentIds();
-    if (tids.length) {
-      tids.forEach(function (sid) { addVocabToBook(word, entry ? entry.pos : "", entry ? entry.zh : "", ctx, sid); });
-    } else {
-      addVocabToBook(word, entry ? entry.pos : "", entry ? entry.zh : "", ctx);
-    }
-    setStatus("已将「" + word + "」加入词汇收藏。", false);
+    if (!tids.length && currentUser && currentUser.id) tids = [currentUser.id];
+    Promise.all(tids.map(function (sid) {
+      return addVocabToBook(word, entry ? entry.pos : "", entry ? entry.zh : "", ctx, sid, { sourceType:'practice' });
+    })).then(function (results) {
+      setStatus(results.some(function (result) { return result.created; }) ? ("已将「" + word + "」加入词汇收藏。") : ("「" + word + "」已在词汇收藏中。"), false);
+    }).catch(function (err) { setStatus('添加生词失败：' + err.message, true); });
   }
   function doVocabExtract() {
     var raw = $("itr-input").value.trim();
@@ -4498,15 +4699,27 @@
   function vbookKey() { return (currentUser && currentUser.id) ? ("itr_vbook_" + currentUser.id) : VBKEY; }
   function getVBook() { return loadJSON(vbookKey(), []); }
   function saveVBook(a) { saveJSON(vbookKey(), a); syncAllToFeishu(); }
-  function addVocabToBook(word, pos, zh, ctx, studentId) {
-    var w = (word || "").trim(); if (!w) return;
-    var key = studentId ? ("itr_vbook_" + studentId) : vbookKey();
-    var book = loadJSON(key, []);
-    var lw = w.toLowerCase();
-    if (book.some(function (x) { return x.word.toLowerCase() === lw; })) { setStatus("「" + w + "」已在词汇收藏中。", false); return; }
-    book.unshift({ word: w, pos: pos || "", zh: zh || "", ctx: ctx || "", box: 1, ts: Date.now() });
-    saveJSON(key, book);
-    setStatus("已加入词汇收藏： " + w, false);
+  function addVocabToBook(word, pos, zh, ctx, studentId, metadata) {
+    var w = (word || "").trim();
+    if (!w) return Promise.reject(new Error('生词不能为空'));
+    var ownerId = studentId || (currentUser && currentUser.id);
+    if (!ownerId) return Promise.reject(new Error('请先登录'));
+    var payload = Object.assign({
+      ownerId: ownerId,
+      word: w,
+      pos: pos || "",
+      zh: zh || "",
+      ctx: ctx || "",
+      box: 1,
+      ts: Date.now()
+    }, metadata || {});
+    return apiV2('/vbook/items', { method:'POST', body:JSON.stringify(payload) }).then(function (res) {
+      if (!res || res.ok !== true || !Array.isArray(res.data)) throw new Error('服务器未确认生词保存');
+      if (res.state) applyServerState(res.state);
+      else ownerData(ownerId).vbook = cloneData(res.data, []);
+      syncAllToFeishu();
+      return { created: res.created === true, item: res.item || null, data: res.data };
+    });
   }
   function renderVBook() {
     var panel = $("itr-vbook-panel");

@@ -617,6 +617,73 @@ def test_ai_chat_non_json_non_2xx_maps_status_without_parsing_body(tmp_path):
     assert "HTML" not in json.dumps(body)
 
 
+def test_assignment_vocabulary_item_is_confirmed_idempotent_and_persistent(tmp_path):
+    app = make_app(tmp_path)
+    teacher = app.test_client()
+    student = app.test_client()
+    other_student = app.test_client()
+    register(teacher, "vocab-teacher", role="teacher", password="teacher-password")
+    register(student, "vocab-student")
+    register(other_student, "vocab-other")
+    store = app.extensions["reading_trainer_v2"]["store"]
+    teacher_id = teacher.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    student_id = student.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    existing = store.get_user(student_id)
+    store.upsert_user(
+        {
+            "id": student_id,
+            "username": "vocab-student",
+            "role": "student",
+            "password_hash": existing["password_hash"],
+            "created_by": teacher_id,
+            "created_at": existing["created_at"],
+        }
+    )
+    created_assignment = teacher.post(
+        "/reading-trainer/api/v2/assignments",
+        json={
+            "id": "assignment-vocab-1",
+            "title": "Vocabulary source",
+            "studentIds": [student_id],
+            "sections": [{"article": "Reliable systems preserve every vocabulary item.", "questions": []}],
+        },
+    )
+    assert created_assignment.status_code == 201
+
+    payload = {
+        "word": "Reliable",
+        "pos": "adj.",
+        "zh": "可靠的",
+        "ctx": "Reliable systems preserve every vocabulary item.",
+        "sourceType": "assignment",
+        "assignmentId": "assignment-vocab-1",
+        "assignmentTitle": "Vocabulary source",
+        "articleIndex": 0,
+    }
+    first = student.post("/reading-trainer/api/v2/vbook/items", json=payload)
+    assert first.status_code == 200
+    assert first.get_json()["ok"] is True
+    assert first.get_json()["created"] is True
+    assert len(first.get_json()["data"]) == 1
+    duplicate = student.post("/reading-trainer/api/v2/vbook/items", json={**payload, "word": "reliable"})
+    assert duplicate.status_code == 200
+    assert duplicate.get_json()["created"] is False
+    assert len(duplicate.get_json()["data"]) == 1
+
+    forbidden = other_student.post("/reading-trainer/api/v2/vbook/items", json=payload)
+    assert forbidden.status_code == 403
+    assert forbidden.get_json()["error"]["code"] == "forbidden_assignment"
+
+    app2 = make_app(tmp_path)
+    refreshed = app2.test_client()
+    login(refreshed, "vocab-student", "student", "student-password")
+    saved = refreshed.get("/reading-trainer/api/v2/data/vbook").get_json()["data"]
+    assert len(saved) == 1
+    assert saved[0]["word"] == "Reliable"
+    assert saved[0]["assignmentId"] == "assignment-vocab-1"
+    assert saved[0]["sourceType"] == "assignment"
+
+
 def test_assignments_permissions_visibility_read_submit_idempotency_and_transfer(tmp_path):
     app = make_app(tmp_path)
     teacher = app.test_client()
