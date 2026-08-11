@@ -140,3 +140,40 @@ def test_assignment_flow_exposes_per_question_check_and_full_report():
     assert "能力分析与学习建议" in report_source
     assert "分项统计" in report_source
     assert "buildPracticeReportMarkup" in grade_source
+
+
+def test_assignment_send_requires_server_ack_and_all_recipients():
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required to execute the embedded frontend helper")
+    source = FRONTEND.read_text(encoding="utf-8")
+    start = source.index("function assignmentSendResponseConfirmed(")
+    end = source.index("function confirmAssignmentAfterTransportError(", start)
+    helper = source[start:end]
+    harness = f"""
+function assignmentId(a) {{ return a && (a.id != null ? a.id : (a.assignmentId != null ? a.assignmentId : a.assignment_id)); }}
+function assignmentObjectFromResponse(res) {{ return res && (res.assignment || res.item || null); }}
+{helper}
+const cases = [
+  assignmentSendResponseConfirmed({{ok:true, assignment:{{id:'asgn_1', status:'sent', studentIds:['s1','s2']}}}}, 'asgn_1', ['s1','s2']),
+  assignmentSendResponseConfirmed({{ok:true, assignment:{{id:'asgn_1', status:'sent', studentIds:['s1']}}}}, 'asgn_1', ['s1','s2']),
+  assignmentSendResponseConfirmed({{ok:true, assignment:{{id:'asgn_1', status:'draft', studentIds:['s1']}}}}, 'asgn_1', ['s1']),
+  assignmentSendResponseConfirmed({{ok:false, assignment:{{id:'asgn_1', status:'sent', studentIds:['s1']}}}}, 'asgn_1', ['s1'])
+];
+process.stdout.write(JSON.stringify(cases));
+"""
+    result = subprocess.run(["node", "-e", harness], cwd=ROOT, capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == [True, False, False, False]
+
+
+def test_pdf_export_has_watermark_controls_and_no_heading_answer_leak():
+    source = FRONTEND.read_text(encoding="utf-8")
+    worksheet_source = _function_source(source, "worksheetQuestion", "worksheetAnswerSheet")
+    assert "itr-paper-watermark" in source
+    assert "opacity: .3" in source
+    assert "itr-pdf-export-modal" in source
+    assert "导出 A4 PDF" in source
+    assert "发送答题作业" in source
+    assert re.search(r"MAX_PDF_ANSWER_SLOTS\s*=\s*60", source)
+    assert "请减少题目或拆分试卷" in source
+    assert "escapeHtml(it.heading)" not in worksheet_source
+    assert "headingOptionValue(q.answer" not in worksheet_source

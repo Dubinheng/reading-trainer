@@ -511,15 +511,18 @@
   #itr-app.itr-pdf .itr-worksheet { display: block; }
   #itr-app.itr-pdf #itr-cards { display: none; }
   #itr-app .itr-paper {
-    width: 210mm; min-height: 297mm; margin: 0 auto 24px; background: #fff; color: #1a1a1a;
+    position: relative; isolation: isolate; width: 210mm; min-height: 297mm; margin: 0 auto 24px; background: #fff; color: #1a1a1a;
     padding: 18mm 16mm; box-shadow: 0 2px 14px rgba(16,30,54,.12); border-radius: 2px;
     font-size: 13px; line-height: 1.7;
   }
+  #itr-app .itr-paper-content { position: relative; z-index: 1; }
+  #itr-app .itr-paper-watermark { position: fixed; z-index: 0; pointer-events: none; left: 50%; top: 50%; width: 65%; max-width: 140mm; height: auto; transform: translate(-50%,-50%); opacity: .3; }
   #itr-app .itr-paper h2 { font-size: 18px; margin: 0 0 4px; text-align: center; }
   #itr-app .itr-paper .itr-doc-meta {
     text-align: center; color: #555; font-size: 12px; margin-bottom: 18px;
     border-bottom: 1px solid #ddd; padding-bottom: 10px;
   }
+  #itr-app .itr-paper-fields { margin: 0 0 16px; padding: 8px 10px; border-bottom: 1px solid #ddd; font-size: 12px; }
   #itr-app .itr-paper .itr-sec-title {
     font-size: 14px; font-weight: 700; margin: 18px 0 8px; padding-left: 8px; border-left: 4px solid var(--itr-accent);
   }
@@ -536,6 +539,12 @@
   #itr-app .itr-key h3 { font-size: 16px; margin: 0 0 10px; }
   #itr-app .itr-key-item { margin-bottom: 8px; font-size: 12.5px; }
   #itr-app .itr-key-item b { color: var(--itr-green); }
+  #itr-app .itr-wq-inline-answer { margin-top: 6px; padding-top: 5px; border-top: 1px dashed #ddd; color: #176b46; font-size: 12px; }
+  #itr-app .itr-answer-sheet { page-break-before: always; margin-top: 20px; }
+  #itr-app .itr-answer-sheet h3 { font-size: 16px; margin: 0 0 12px; }
+  #itr-app .itr-answer-sheet-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px 14px; }
+  #itr-app .itr-answer-cell { display:flex; align-items:center; gap:8px; min-height:28px; font-size:12px; }
+  #itr-app .itr-answer-cell span { flex:1; height:22px; border-bottom:1px solid #555; }
 
   /* ===== New question types (headings / diagram / sentence-end) ===== */
   #itr-app .itr-headings .itr-hd-row, #itr-app .itr-send .itr-send-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
@@ -638,6 +647,23 @@
     background: var(--itr-surface); border: 1px solid var(--itr-border); border-radius: 10px;
     padding: 12px 14px; font-size: 13px; color: var(--itr-text); box-shadow: var(--itr-shadow-2);
   }
+  #itr-app .itr-toast.success { border-color: rgba(44,191,120,.55); background: #effcf5; color: #176b46; }
+  #itr-app .itr-toast.error { border-color: rgba(220,38,38,.45); background: #fff1f2; color: #991b1b; }
+  #itr-app[data-itr-theme="dark"] .itr-toast.success { background: rgba(44,191,120,.14); color: #8cf0ba; }
+  #itr-app[data-itr-theme="dark"] .itr-toast.error { background: rgba(220,38,38,.16); color: #ffabab; }
+
+  /* ===== A4 export modal / watermark ===== */
+  #itr-app .itr-pdf-export-card { width: 620px; }
+  #itr-app .itr-pdf-title-wrap { display:flex; align-items:center; gap:4px; color:var(--itr-text); font-weight:700; }
+  #itr-app .itr-pdf-title-wrap input { flex:1; min-width:0; font-weight:600; }
+  #itr-app .itr-pdf-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:16px 0; }
+  #itr-app .itr-pdf-option { display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid var(--itr-border); border-radius:10px; background:var(--itr-fill); color:var(--itr-text); font-size:13px; cursor:pointer; }
+  #itr-app .itr-pdf-option input { flex:0 0 auto; }
+  #itr-app .itr-pdf-export-meta { padding:10px 12px; border-radius:10px; background:var(--itr-primary-soft); color:var(--itr-primary-on-soft); font-size:12px; }
+  #itr-app .itr-pdf-export-note { margin-top:8px; color:var(--itr-muted); font-size:12px; line-height:1.6; }
+  #itr-app .itr-pdf-export-status { margin-top:10px; min-height:20px; font-size:13px; }
+  #itr-app .itr-pdf-export-status.error { color:var(--itr-red); }
+  #itr-app .itr-pdf-export-status.success { color:var(--itr-green); }
 
   @media print {
     @page { size: A4; margin: 16mm; }
@@ -2741,11 +2767,11 @@
       .catch(function (e) { expEl.textContent = "讲解失败：" + friendlyApiError(e); });
   }
 
-  function showToast(msg) {
+  function showToast(msg, kind) {
     var old = $("itr-toast");
     if (old) old.parentNode.removeChild(old);
     var t = document.createElement("div");
-    t.id = "itr-toast"; t.className = "itr-toast"; t.textContent = msg;
+    t.id = "itr-toast"; t.className = "itr-toast" + (kind ? " " + kind : ""); t.textContent = msg;
     $("itr-app").appendChild(t);
     setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 6000);
   }
@@ -3322,23 +3348,64 @@
   }
 
   // ---------- Rendering: worksheet (print / PDF) ----------
-  function worksheetQuestion(q) {
+  var MAX_PDF_ANSWER_SLOTS = 60;
+  function worksheetQuestionSlotCount(q) {
+    var type = normType(q && q.type);
+    if (type === "matching" || type === "headings") return Math.max(1, Array.isArray(q.items) ? q.items.length : 1);
+    if (type === "diagram") return Math.max(1, Array.isArray(q.steps) ? q.steps.length : 1);
+    if (type === "sentence-end") return Math.max(1, Array.isArray(q.beginnings) ? q.beginnings.length : 1);
+    return 1;
+  }
+  function worksheetTotalSlots(sections) {
+    return (sections || []).reduce(function (sum, sec) {
+      return sum + (sec.questions || []).reduce(function (inner, q) { return inner + worksheetQuestionSlotCount(q); }, 0);
+    }, 0);
+  }
+  function worksheetOptionText(value) {
+    if (value == null) return "";
+    if (typeof value === "string" || typeof value === "number") return String(value);
+    if (typeof value === "object") return String(value.text || value.label || value.heading || value.topic || value.value || "");
+    return String(value);
+  }
+  function worksheetOptionLabel(value, fallback) {
+    if (value && typeof value === "object" && value.label != null) return String(value.label);
+    return fallback || "";
+  }
+  function worksheetUniqueOptions(values) {
+    var seen = {}, out = [];
+    (values || []).forEach(function (value) {
+      var text = worksheetOptionText(value).trim();
+      if (!text || seen[text]) return;
+      seen[text] = true; out.push(text);
+    });
+    return out;
+  }
+  function worksheetQuestion(q, options) {
+    options = options || {};
+    var includeAnswers = !!options.includeAnswers;
     var h = '<div class="itr-wq">';
     h += '<div class="itr-wq-head"><span class="itr-wq-num">' + q.id + '.</span> ' + badge(q.exam, typeLabel(q.type)) + '</div>';
     h += '<div class="itr-wq-body">' + escapeHtml(q.prompt).replace(/\n/g, "<br>") + "</div>";
     if (q.type === "multiple-choice" || q.type === "vocabulary") {
-      (q.options || []).forEach(function (o) { h += '<div class="itr-wq-opt">' + escapeHtml(o.label) + ". " + escapeHtml(o.text) + "</div>"; });
+      (q.options || []).forEach(function (o, oi) {
+        var label = worksheetOptionLabel(o, String.fromCharCode(65 + oi));
+        h += '<div class="itr-wq-opt">' + escapeHtml(label) + ". " + escapeHtml(worksheetOptionText(o)) + "</div>";
+      });
     } else if (q.type === "true-false-notgiven") {
       h += '<div class="itr-wq-opt">TRUE &nbsp; FALSE &nbsp; NOT GIVEN</div>';
     } else if (q.type === "fill-blank") {
       h += '<div class="itr-wq-opt">答：<span class="itr-wq-blank"></span></div>';
     } else if (q.type === "matching") {
+      var matchingOptions = worksheetUniqueOptions((q.options || []).concat((q.items || []).map(function (it) { return it && (it.heading || it.topic); })));
+      if (matchingOptions.length) h += '<div class="itr-wq-opt" style="color:#555;"><b>小标题选项：</b>' + matchingOptions.map(function (v, i) { return (i + 1) + ". " + escapeHtml(v); }).join(" ｜ ") + '</div>';
       (q.items || []).forEach(function (it) {
-        h += '<div class="itr-wq-opt">' + escapeHtml(it.para) + ' &nbsp;→&nbsp; 小标题：<span class="itr-wq-blank"></span> <span style="color:#888">(' + escapeHtml(it.heading) + ")</span></div>";
+        h += '<div class="itr-wq-opt">' + escapeHtml(it && (it.para || it.text || "")) + ' &nbsp;→&nbsp; 小标题：<span class="itr-wq-blank"></span></div>';
       });
     } else if (q.type === "headings") {
-      (q.items || []).forEach(function (it, i) {
-        h += '<div class="itr-wq-opt">' + escapeHtml(it.para) + '：' + escapeHtml(it.topic) + ' &nbsp;→&nbsp; 标题：<span class="itr-wq-blank"></span> <span style="color:#888">(' + escapeHtml(headingOptionValue(q.answer && q.answer[i]) || "") + ")</span></div>";
+      var headingOptions = worksheetUniqueOptions(q.options || (q.items || []).map(function (it) { return it && (it.topic || it.heading); }));
+      if (headingOptions.length) h += '<div class="itr-wq-opt" style="color:#555;"><b>标题选项：</b>' + headingOptions.map(function (v, i) { return (i + 1) + ". " + escapeHtml(v); }).join(" ｜ ") + '</div>';
+      (q.items || []).forEach(function (it) {
+        h += '<div class="itr-wq-opt">' + escapeHtml(it && (it.para || it.text || "")) + ' &nbsp;→&nbsp; 标题：<span class="itr-wq-blank"></span></div>';
       });
     } else if (q.type === "diagram") {
       (q.steps || []).forEach(function (st, i) {
@@ -3350,25 +3417,44 @@
       });
       h += '<div class="itr-wq-opt" style="color:#888;">结尾选项：' + (q.endings || []).map(function (e) { return escapeHtml(e.id) + ". " + escapeHtml(e.text); }).join(" ｜ ") + "</div>";
     }
+    if (includeAnswers) h += '<div class="itr-wq-inline-answer"><b>答案：</b>' + escapeHtml(answerDisplay(q)) + (q.explanation ? ' ｜ ' + escapeHtml(q.explanation) : '') + '</div>';
     h += "</div>";
     return h;
   }
 
-  function buildWorksheet(sections, level, exam, withKey, withVocab) {
-    var total = sections.reduce(function (a, s) { return a + s.questions.length; }, 0);
+  function worksheetAnswerSheet(sections) {
+    var h = '<div class="itr-answer-sheet"><h3>独立答题纸</h3><div class="itr-answer-sheet-grid">';
+    (sections || []).forEach(function (sec) {
+      (sec.questions || []).forEach(function (q) {
+        h += '<div class="itr-answer-cell"><b>' + escapeHtml(q.id) + '.</b><span></span></div>';
+      });
+    });
+    return h + '</div></div>';
+  }
+
+  function buildWorksheet(sections, level, exam, withKey, withVocab, options) {
+    options = options || {};
+    var total = worksheetTotalSlots(sections);
     var now = new Date();
     var dateStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
-    var h = '<div class="itr-paper">';
-    h += '<h2>英语阅读理解练习卷</h2>';
+    var title = String(options.title || "英语阅读理解练习卷").trim() || "英语阅读理解练习卷";
+    var includeArticle = options.includeArticle !== false;
+    var includeIdentity = options.includeIdentity !== false;
+    var includeAnswerSheet = options.includeAnswerSheet !== false;
+    var watermarkSrc = options.watermarkSrc || "assets/logo_t.png";
+    var h = '<div class="itr-paper">' + (watermarkSrc ? '<img class="itr-paper-watermark" src="' + escapeHtml(watermarkSrc) + '" alt="" aria-hidden="true">' : '') + '<div class="itr-paper-content">';
+    h += '<h2>「' + escapeHtml(title) + '」</h2>';
     h += '<div class="itr-doc-meta">难度级别：' + escapeHtml(level.name) + ' ｜ 考试类型：' + escapeHtml(exam === "both" ? "雅思/托福" : exam) +
          ' ｜ 文章篇数：' + sections.length + ' ｜ 题目总数：' + total + ' ｜ 日期：' + dateStr + '</div>';
+    if (includeIdentity) h += '<div class="itr-paper-fields">姓名：________________　班级：________________　日期：________________</div>';
 
     sections.forEach(function (sec, si) {
       if (sections.length > 1) h += '<div class="itr-sec-title">文章 ' + (si + 1) + "</div>";
-      if (sec.showArticle) h += '<div class="itr-art">' + escapeHtml(sec.article) + "</div>";
-      sec.questions.forEach(function (q) { h += worksheetQuestion(q); });
+      if (includeArticle) h += '<div class="itr-art">' + escapeHtml(sec.article) + "</div>";
+      sec.questions.forEach(function (q) { h += worksheetQuestion(q, { includeAnswers: false }); });
     });
 
+    if (includeAnswerSheet) h += worksheetAnswerSheet(sections);
     if (withKey === "yes") {
       h += '<div class="itr-key"><h3>参考答案与解析</h3>';
       sections.forEach(function (sec, si) {
@@ -3393,7 +3479,7 @@
       });
       h += "</div>";
     }
-    h += "</div>";
+    h += "</div></div>";
     return h;
   }
 
@@ -3418,8 +3504,9 @@
     });
     html += '<div class="itr-submit-bar"><button type="button" class="itr-btn itr-primary" id="itr-submit-grade">' + ICONS.pencil + ' 提交批改与分析</button>' +
             '<span class="itr-hint" style="margin:0;">提交后自动判分、汇总错题并给出能力分析（共 ' + total + ' 题）</span>';
+    html += '<button type="button" class="itr-btn itr-ghost" id="itr-export-pdf" disabled>' + ICONS.down + ' 导出 A4 PDF</button>';
     if (currentUser && currentUser.role === 'teacher') {
-      html += '<button type="button" class="itr-btn itr-ghost" id="itr-send-assignment" disabled>📋 发送为题卡作业</button>';
+      html += '<button type="button" class="itr-btn itr-ghost" id="itr-send-assignment" disabled>📋 发送答题作业</button>';
     }
     html += '</div>';
     out.innerHTML = html;
@@ -3453,12 +3540,22 @@
       updateAssignmentSendButton(sendBtn);
       sendBtn.addEventListener("click", function () { openAssignmentComposer(sections); });
     }
+    var exportBtn = $("itr-export-pdf");
+    if (exportBtn) {
+      exportBtn.disabled = !latestGenerated;
+      exportBtn.addEventListener("click", function () { openPaperExportModal(); });
+    }
   }
 
   function renderWorksheet(sections, level, exam, withKey) {
     var ws = $("itr-worksheet");
     var withVocab = $("itr-withvocab") ? $("itr-withvocab").value : "no";
-    var inner = buildWorksheet(sections, level, exam, withKey, withVocab);
+    var inner = buildWorksheet(sections, level, exam, withKey, withVocab, {
+      includeArticle: sections.some(function (sec) { return sec.showArticle; }),
+      includeAnswerSheet: true,
+      includeIdentity: true,
+      watermarkSrc: "assets/logo_t.png"
+    });
     var withScore = $("itr-withscore") ? $("itr-withscore").value : "no";
     if (withScore === "yes") {
       var stu = currentStudent();
@@ -3481,10 +3578,111 @@
       }
       inner += '</div>';
     }
-    var toolbar = '<div class="itr-no-print" style="text-align:right;margin-bottom:10px;">' +
-      '<button type="button" class="itr-btn itr-primary" id="itr-print">' + ICONS.print + ' 打印 / 保存为 PDF</button></div>';
+    var toolbar = '<div class="itr-no-print" style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
+      '<button type="button" class="itr-btn itr-ghost" id="itr-print">' + ICONS.print + ' 打印 / 保存为 PDF</button>' +
+      '<button type="button" class="itr-btn itr-primary" id="itr-export-pdf">' + ICONS.down + ' 导出 A4 PDF</button></div>';
     ws.innerHTML = toolbar + inner;
     $("itr-print").addEventListener("click", function () { window.print(); });
+    $("itr-export-pdf").addEventListener("click", function () { openPaperExportModal(); });
+  }
+
+  function latestPaperData() {
+    if (!latestGenerated || !Array.isArray(latestGenerated.sections) || !latestGenerated.sections.length) return null;
+    var level = LEVELS.filter(function (item) { return String(item.id) === String(latestGenerated.level); })[0] || LEVELS[4];
+    return { sections: cloneData(latestGenerated.sections, []), level: level, exam: latestGenerated.exam || "both" };
+  }
+  function estimatePaperPages(data, options) {
+    var words = (data.sections || []).reduce(function (sum, sec) { return sum + countWords(sec.article || ""); }, 0);
+    var questionCount = worksheetTotalSlots(data.sections);
+    var pages = Math.max(1, Math.ceil(words / (options.includeArticle ? 520 : 1200)) + Math.ceil(questionCount / 9));
+    if (options.includeAnswerSheet) pages += 1;
+    if (options.includeKey) pages += Math.max(1, Math.ceil(questionCount / 14));
+    if (options.includeVocab) pages += Math.max(1, (data.sections || []).length);
+    return pages;
+  }
+  function paperExportOptionsFromModal(modal) {
+    return {
+      title: (modal.querySelector('#itr-pdf-title') || {}).value || '英语阅读理解练习卷',
+      includeArticle: !!(modal.querySelector('#itr-pdf-article') || {}).checked,
+      includeAnswerSheet: !!(modal.querySelector('#itr-pdf-answer-sheet') || {}).checked,
+      includeKey: !!(modal.querySelector('#itr-pdf-key') || {}).checked,
+      includeVocab: !!(modal.querySelector('#itr-pdf-vocab') || {}).checked,
+      includeIdentity: !!(modal.querySelector('#itr-pdf-identity') || {}).checked,
+      watermarkSrc: new URL('assets/logo_t.png', window.location.href).href
+    };
+  }
+  function paperPrintDocument(data, options) {
+    var style = Array.prototype.map.call(document.querySelectorAll('style'), function (node) { return node.textContent || ''; }).join('\n');
+    var body = buildWorksheet(data.sections, data.level, data.exam, options.includeKey ? 'yes' : 'no', options.includeVocab ? 'yes' : 'no', options);
+    var safeTitle = escapeHtml(options.title || '英语阅读理解练习卷');
+    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>' + safeTitle + '</title><style>' + style + '\n' +
+      'html,body{background:#fff!important;margin:0;padding:0;}#itr-app{max-width:none!important;padding:0!important;margin:0!important;}#itr-app .itr-paper{width:auto!important;min-height:auto!important;margin:0!important;box-shadow:none!important;border-radius:0!important;}#itr-app .itr-paper-watermark{position:fixed!important;opacity:.3!important;}@page{size:A4;margin:16mm;}@media print{.itr-no-print{display:none!important;}}</style></head><body>' +
+      '<div id="itr-app" data-itr-theme="light" data-itr-session="1">' + body + '</div></body></html>';
+  }
+  function openPaperPrintWindow(options, shouldPrint) {
+    var data = latestPaperData();
+    if (!data) { showToast('请先生成试题，再导出 A4 PDF。', 'error'); return null; }
+    var w = (typeof window.open === 'function') ? window.open('', '_blank') : null;
+    if (!w) { showToast('导出失败：浏览器拦截了弹出窗口，请允许弹出窗口后重试。', 'error'); return null; }
+    w.document.open(); w.document.write(paperPrintDocument(data, options)); w.document.close();
+    w.document.title = options.title || '英语阅读理解练习卷';
+    if (shouldPrint) {
+      setTimeout(function () { try { w.focus(); w.print(); } catch (e) {} }, 450);
+    }
+    return w;
+  }
+  function openPaperExportModal() {
+    var data = latestPaperData();
+    if (!data) { showToast('请先生成试题，再导出 A4 PDF。', 'error'); return; }
+    document.querySelectorAll('#itr-app .itr-pdf-export-modal').forEach(function (item) { item.remove(); });
+    var total = worksheetTotalSlots(data.sections);
+    var modal = document.createElement('div');
+    modal.className = 'itr-modal itr-pdf-export-modal';
+    modal.innerHTML = '<div class="itr-modal-card itr-pdf-export-card">' +
+      '<div class="itr-modal-head"><h3>' + ICONS.down + ' 导出 A4 PDF</h3><button type="button" class="itr-link" data-pdf-close>关闭</button></div>' +
+      '<label class="itr-pdf-title-wrap" for="itr-pdf-title"><span>试卷标题：「</span><input id="itr-pdf-title" type="text" maxlength="120" value="英语阅读理解练习卷"><span>」</span></label>' +
+      '<div class="itr-pdf-options">' +
+      '<label class="itr-pdf-option"><input type="checkbox" id="itr-pdf-article" checked> 阅读原文</label>' +
+      '<label class="itr-pdf-option"><input type="checkbox" id="itr-pdf-answer-sheet" checked> 独立答题纸</label>' +
+      '<label class="itr-pdf-option"><input type="checkbox" id="itr-pdf-key"> 参考答案与解析</label>' +
+      '<label class="itr-pdf-option"><input type="checkbox" id="itr-pdf-vocab"> 重点词汇表</label>' +
+      '<label class="itr-pdf-option"><input type="checkbox" id="itr-pdf-identity" checked> 姓名 / 班级 / 日期填写栏</label>' +
+      '</div>' +
+      '<div class="itr-pdf-export-meta">共 ' + total + ' 个作答题，预计 ' + estimatePaperPages(data, { includeArticle: true, includeAnswerSheet: true, includeKey: false, includeVocab: false }) + '–' + (estimatePaperPages(data, { includeArticle: true, includeAnswerSheet: true, includeKey: true, includeVocab: true }) + 2) + ' 页。题目总数会写入试卷，页码由打印引擎生成。</div>' +
+      '<div class="itr-pdf-export-note">每一页自动添加 logo 水印，透明度30%，置于正文下层。标题匹配题等题型不会在学生题目页泄露答案。</div>' +
+      '<div class="itr-pdf-export-status" data-pdf-status></div>' +
+      '<div class="itr-btns" style="justify-content:flex-end;margin-top:14px;"><button type="button" class="itr-btn itr-ghost" data-pdf-preview>预览排版</button><button type="button" class="itr-btn itr-primary" data-pdf-download>' + ICONS.down + ' 生成并下载 PDF</button></div>' +
+      '</div>';
+    $('itr-app').appendChild(modal);
+    var close = function () { modal.remove(); };
+    modal.querySelector('[data-pdf-close]').addEventListener('click', close);
+    modal.addEventListener('click', function (event) { if (event.target === modal) close(); });
+    var overLimit = total > MAX_PDF_ANSWER_SLOTS;
+    if (overLimit) {
+      var limitStatus = modal.querySelector('[data-pdf-status]');
+      limitStatus.className = 'itr-pdf-export-status error';
+      limitStatus.textContent = '当前试卷超过 ' + MAX_PDF_ANSWER_SLOTS + ' 个作答题的单份PDF上限，请减少题目或拆分试卷。';
+      modal.querySelector('[data-pdf-preview]').disabled = true;
+      modal.querySelector('[data-pdf-download]').disabled = true;
+    }
+    modal.querySelector('[data-pdf-preview]').addEventListener('click', function () {
+      if (overLimit) return;
+      var options = paperExportOptionsFromModal(modal); openPaperPrintWindow(options, false);
+    });
+    modal.querySelector('[data-pdf-download]').addEventListener('click', function () {
+      if (overLimit) return;
+      var options = paperExportOptionsFromModal(modal);
+      var button = this; button.disabled = true; button.classList.add('itr-busy'); button.textContent = '正在排版…';
+      var status = modal.querySelector('[data-pdf-status]');
+      var win = openPaperPrintWindow(options, true);
+      if (!win) {
+        button.disabled = false; button.classList.remove('itr-busy'); button.innerHTML = ICONS.down + ' 生成并下载 PDF';
+        status.className = 'itr-pdf-export-status error'; status.textContent = '生成失败，请允许弹出窗口后重试。';
+        return;
+      }
+      status.className = 'itr-pdf-export-status success'; status.textContent = '已打开打印窗口，请选择“保存为 PDF”。';
+      setTimeout(close, 700);
+    });
   }
 
   function renderAll(sections, mode, level, exam, showArticle, withKey) {
@@ -3616,7 +3814,27 @@
     var selected = getSelectedStudentIds ? getSelectedStudentIds() : [];
     var validSelected = selected.filter(function (id) { return selectable.some(function (s) { return String(s.id) === String(id); }); });
     btn.disabled = !(available && selectable.length && validSelected.length);
-    btn.title = btn.disabled ? (selectable.length ? '请先选择至少一名学生' : '暂无可布置的学生') : '发送为题卡作业';
+    btn.title = btn.disabled ? (selectable.length ? '请先选择至少一名学生' : '暂无可发送的学生') : '发送答题作业';
+  }
+  function assignmentSendResponseConfirmed(res, expectedId, expectedStudents) {
+    if (!res || res.ok !== true) return false;
+    var assignment = assignmentObjectFromResponse(res) || res;
+    var actualId = assignmentId(assignment);
+    if (!actualId || String(actualId) !== String(expectedId)) return false;
+    var status = String(assignment.status || res.status || '').toLowerCase();
+    if (['sent', 'published'].indexOf(status) === -1) return false;
+    var ids = Array.isArray(assignment.studentIds) ? assignment.studentIds.map(String) : [];
+    if (!ids.length && Array.isArray(assignment.recipients)) {
+      ids = assignment.recipients.map(function (item) { return item && item.studentId != null ? String(item.studentId) : ''; }).filter(Boolean);
+    }
+    var expected = (expectedStudents || []).map(String).filter(Boolean);
+    return ids.length === expected.length && expected.every(function (id) { return ids.indexOf(id) !== -1; });
+  }
+  function confirmAssignmentAfterTransportError(assignmentIdValue, expectedStudents) {
+    if (!assignmentIdValue) return Promise.resolve(false);
+    return apiV2(assignmentPath(assignmentIdValue)).then(function (res) {
+      return assignmentSendResponseConfirmed({ ok: true, assignment: res.assignment || res.data || res }, assignmentIdValue, expectedStudents);
+    }).catch(function () { return false; });
   }
   function assignmentQuestionPayload(sections) {
     return (sections || []).reduce(function (all, section) {
@@ -3627,12 +3845,12 @@
     if (!currentUser || currentUser.role !== 'teacher') return;
     var selectable = getSelectableStudents();
     var selected = getSelectedStudentIds().filter(function (id) { return selectable.some(function (s) { return String(s.id) === String(id); }); });
-    if (!selected.length) { showToast(selectable.length ? '请先选择至少一名学生，再发送题卡作业。' : '暂无可布置作业的学生。'); return; }
+    if (!selected.length) { showToast(selectable.length ? '请先选择至少一名学生，再发送答题作业。' : '暂无可发送答题作业的学生。', 'error'); return; }
     var old = $('itr-assignment-compose'); if (old && old.parentNode) old.parentNode.removeChild(old);
     var wrap = document.createElement('div'); wrap.id = 'itr-assignment-compose'; wrap.className = 'itr-assignment-compose';
     var defaultTitle = '阅读题卡 · ' + new Date().toLocaleDateString('zh-CN');
     var names = selected.map(function (id) { var s = selectable.filter(function (x) { return String(x.id) === String(id); })[0]; return s ? (s.name || s.username || s.id) : id; });
-    wrap.innerHTML = '<div style="font-weight:700;margin-bottom:10px;">发送为题卡作业</div>' +
+    wrap.innerHTML = '<div style="font-weight:700;margin-bottom:10px;">发送答题作业</div>' +
       '<div class="itr-row"><div class="itr-field" style="flex:2 1 240px;"><label for="itr-assignment-title">标题</label><input type="text" id="itr-assignment-title" value="' + escapeHtml(defaultTitle) + '" maxlength="120"></div>' +
       '<div class="itr-field"><label for="itr-assignment-deadline">截止时间（可选）</label><input type="datetime-local" id="itr-assignment-deadline"></div></div>' +
       '<div class="itr-field" style="margin-top:10px;"><label for="itr-assignment-description">说明（可选）</label><textarea id="itr-assignment-description" style="min-height:76px;" placeholder="给学生的提示或要求…"></textarea></div>' +
@@ -3646,22 +3864,33 @@
       var title = $('itr-assignment-title').value.trim();
       var description = $('itr-assignment-description').value.trim();
       var deadlineInput = $('itr-assignment-deadline').value;
-      if (!title) { showToast('请填写作业标题。'); return; }
+      if (!title) { showToast('请填写作业标题。', 'error'); return; }
       var deadline = deadlineInput ? new Date(deadlineInput).toISOString() : null;
       var questions = assignmentQuestionPayload(sections);
+      var assignmentRequestId = uid('asgn');
       var payload = {
+        id: assignmentRequestId,
         title: title, description: description, dueAt: deadline, deadline: deadline,
         studentIds: selected, student_ids: selected,
         questions: questions,
         sections: cloneData(sections, []),
         source: { type: 'reading-trainer', level: latestGenerated && latestGenerated.level, exam: latestGenerated && latestGenerated.exam }
       };
-      var send = $('itr-assignment-send-confirm'); send.disabled = true; send.classList.add('itr-busy');
+      var send = $('itr-assignment-send-confirm'); send.disabled = true; send.classList.add('itr-busy'); send.textContent = '正在发送…';
       apiV2('/assignments', { method: 'POST', body: JSON.stringify(payload) }).then(function (res) {
-        wrap.remove(); showToast('题卡作业已发送给 ' + selected.length + ' 名学生。');
+        if (!assignmentSendResponseConfirmed(res, assignmentRequestId, selected)) throw new Error('服务器未确认作业已发送给全部学生');
+        wrap.remove(); showToast('答题作业发送成功，已发送给 ' + selected.length + ' 名学生。', 'success');
         refreshAssignmentSummary();
       }).catch(function (err) {
-        send.disabled = false; send.classList.remove('itr-busy'); showToast('发送作业失败：' + err.message);
+        confirmAssignmentAfterTransportError(assignmentRequestId, selected).then(function (confirmed) {
+          if (confirmed) {
+            wrap.remove(); showToast('答题作业发送成功，已发送给 ' + selected.length + ' 名学生。', 'success');
+            refreshAssignmentSummary();
+            return;
+          }
+          send.disabled = false; send.classList.remove('itr-busy'); send.textContent = '重新发送';
+          showToast('发送答题作业失败：' + (err && err.message ? err.message : '服务器未确认保存'), 'error');
+        });
       });
     });
   }
