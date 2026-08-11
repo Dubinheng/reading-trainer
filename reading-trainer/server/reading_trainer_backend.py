@@ -1493,6 +1493,35 @@ def _ai_upstream_failure(response: Any | None = None, exc: Exception | None = No
     return _error("AI 服务商连接失败，请检查 Key、余额和接口配置。", 502, "ai_upstream_error")
 
 
+def _ai_response_content(result: Any) -> Any:
+    """Extract the first chat choice's message content safely.
+
+    Providers can return a successful JSON envelope without a usable answer.
+    Treat a missing choice/message/content the same as an empty content so the
+    proxy never turns that malformed success into a misleading HTTP 200.
+    """
+
+    if not isinstance(result, Mapping):
+        return None
+    choices = result.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, Mapping):
+        return None
+    message = first.get("message")
+    if not isinstance(message, Mapping):
+        return None
+    return message.get("content")
+
+
+def _ai_response_content_empty(result: Any) -> bool:
+    """Return whether an upstream chat response has no usable content."""
+
+    content = _ai_response_content(result)
+    return not isinstance(content, str) or not content.strip()
+
+
 def _ai_timeout_seconds(app: Any) -> float:
     """Read and safely bound the AI upstream timeout.
 
@@ -2025,17 +2054,33 @@ def _create_blueprint(store: ReadingTrainerStore):
         max_tokens = _safe_ai_max_tokens(payload.get("max_tokens"))
         if max_tokens is not None:
             upstream["max_tokens"] = max_tokens
-        if isinstance(payload.get("response_format"), Mapping):
+        response_format_requested = isinstance(payload.get("response_format"), Mapping)
+        if response_format_requested:
             upstream["response_format"] = sanitize_json(payload["response_format"])
+        is_deepseek_json = cfg.get("provider", "").lower() == "deepseek" and response_format_requested
+        if is_deepseek_json:
+            # DeepSeek V4 enables thinking by default. Structured question
+            # generation does not need hidden chain-of-thought, and disabling
+            # it preserves the output budget for the actual JSON response.
+            upstream["thinking"] = {"type": "disabled"}
         client = current_app.extensions.get("reading_trainer_v2", {}).get("http_client")
+        timeout_seconds = _ai_timeout_seconds(current_app)
+        deadline = time.monotonic() + timeout_seconds
+
+        def remaining_timeout() -> float:
+            return deadline - time.monotonic()
+
         try:
+            remaining = remaining_timeout()
+            if remaining <= 0:
+                return _ai_upstream_failure(exc=TimeoutError("AI request deadline exceeded"))
             response = _http_request(
                 client,
                 "POST",
                 cfg["endpoint"],
                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + cfg["api_key"]},
                 json=upstream,
-                timeout=_ai_timeout_seconds(current_app),
+                timeout=remaining,
             )
             if not getattr(response, "ok", True):
                 return _ai_upstream_failure(response)
@@ -2045,6 +2090,39 @@ def _create_blueprint(store: ReadingTrainerStore):
                 # A successful response that is not JSON is still an upstream
                 # failure, but its body must never be reflected to the caller.
                 return _ai_upstream_failure(exc=exc)
+
+            if _ai_response_content_empty(result):
+                if is_deepseek_json:
+                    remaining = remaining_timeout()
+                    if remaining <= 0:
+                        return _ai_upstream_failure(exc=TimeoutError("AI request deadline exceeded"))
+                    retry_upstream = dict(upstream)
+                    retry_upstream.pop("response_format", None)
+                    retry_messages = [dict(item) for item in clean_messages]
+                    for message in reversed(retry_messages):
+                        if message.get("role") == "user":
+                            suffix = "返回完整JSON且不可为空。"
+                            content = str(message.get("content") or "")
+                            message["content"] = (content.rstrip() + "\n" + suffix).strip()
+                            break
+                    retry_upstream["messages"] = retry_messages
+                    response = _http_request(
+                        client,
+                        "POST",
+                        cfg["endpoint"],
+                        headers={"Content-Type": "application/json", "Authorization": "Bearer " + cfg["api_key"]},
+                        json=retry_upstream,
+                        timeout=remaining,
+                    )
+                    if not getattr(response, "ok", True):
+                        return _ai_upstream_failure(response)
+                    try:
+                        result = response.json()
+                    except Exception as exc:
+                        return _ai_upstream_failure(exc=exc)
+
+                if _ai_response_content_empty(result):
+                    return _error("AI 服务商返回了空内容，请稍后重试。", 502, "ai_empty_response")
             return jsonify({"data": sanitize_json(result)})
         except Exception as exc:
             # Do not reflect upstream response bodies or exception text: they
