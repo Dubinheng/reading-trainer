@@ -464,12 +464,121 @@ def test_ai_chat_bounds_max_tokens_and_uses_configured_timeout(tmp_path):
     assert response.status_code == 200
     assert len(calls) == 1
     kwargs = calls[0][2]
-    assert kwargs["timeout"] == 112
+    assert 0 < kwargs["timeout"] <= 112
     assert kwargs["json"]["model"] == "server-model"
     assert kwargs["json"]["max_tokens"] == 8192
     assert kwargs["headers"]["Authorization"] == "Bearer server-secret"
     assert _safe_ai_max_tokens(-100) == 256
     assert _safe_ai_max_tokens("not-a-number") is None
+
+
+def test_ai_chat_deepseek_empty_json_retries_without_response_format(tmp_path):
+    app = make_app(tmp_path)
+    admin = app.test_client()
+    admin_login(admin)
+    configured = admin.put(
+        "/reading-trainer/api/v2/state/ai",
+        json={
+            "value": {
+                "provider": "deepseek",
+                "endpoint": "https://api.deepseek.com/v1/chat/completions",
+                "model": "server-model",
+                "key": "server-secret",
+                "enabled": True,
+            }
+        },
+    )
+    assert configured.status_code == 200
+    app.config["READING_TRAINER_AI_TIMEOUT"] = 112
+    calls = []
+
+    class DeepSeekResponse:
+        ok = True
+        status_code = 200
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    responses = iter(
+        [
+            {"choices": [{"message": {"content": "   ", "reasoning_content": "private reasoning"}}]},
+            {"choices": [{"message": {"content": "{\"answer\":1}"}}]},
+        ]
+    )
+
+    def fake_http(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return DeepSeekResponse(next(responses))
+
+    app.extensions["reading_trainer_v2"]["http_client"] = fake_http
+    response = admin.post(
+        "/reading-trainer/api/v2/ai/chat",
+        json={
+            "messages": [{"role": "user", "content": "Reply with JSON."}],
+            "response_format": {"type": "json_object"},
+        },
+    )
+    assert response.status_code == 200
+    assert response.get_json()["data"]["choices"][0]["message"]["content"] == '{"answer":1}'
+    assert len(calls) == 2
+    assert calls[0][2]["json"]["response_format"] == {"type": "json_object"}
+    assert calls[0][2]["json"]["thinking"] == {"type": "disabled"}
+    assert "response_format" not in calls[1][2]["json"]
+    assert calls[1][2]["json"]["thinking"] == {"type": "disabled"}
+    assert calls[1][2]["json"]["model"] == "server-model"
+    assert "返回完整JSON且不可为空" in calls[1][2]["json"]["messages"][-1]["content"]
+    assert calls[0][2]["headers"]["Authorization"] == calls[1][2]["headers"]["Authorization"] == "Bearer server-secret"
+    assert 0 < calls[0][2]["timeout"] <= 112
+    assert 0 < calls[1][2]["timeout"] <= calls[0][2]["timeout"]
+
+
+def test_ai_chat_empty_json_returns_safe_502_after_deepseek_retry(tmp_path):
+    app = make_app(tmp_path)
+    admin = app.test_client()
+    admin_login(admin)
+    configured = admin.put(
+        "/reading-trainer/api/v2/state/ai",
+        json={
+            "value": {
+                "provider": "deepseek",
+                "endpoint": "https://api.deepseek.com/v1/chat/completions",
+                "model": "server-model",
+                "key": "server-secret",
+                "enabled": True,
+            }
+        },
+    )
+    assert configured.status_code == 200
+    calls = []
+
+    class EmptyResponse:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "", "reasoning_content": "secret reasoning"}}]}
+
+    def fake_http(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return EmptyResponse()
+
+    app.extensions["reading_trainer_v2"]["http_client"] = fake_http
+    response = admin.post(
+        "/reading-trainer/api/v2/ai/chat",
+        json={
+            "messages": [{"role": "user", "content": "Reply with JSON."}],
+            "response_format": {"type": "json_object"},
+        },
+    )
+    assert response.status_code == 502
+    body = response.get_json()
+    assert body["error"]["code"] == "ai_empty_response"
+    assert "secret reasoning" not in json.dumps(body)
+    assert len(calls) == 2
+    assert "response_format" not in calls[1][2]["json"]
 
 
 def test_ai_chat_non_json_non_2xx_maps_status_without_parsing_body(tmp_path):
