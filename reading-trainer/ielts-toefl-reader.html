@@ -410,6 +410,60 @@
   #itr-app .itr-legend .li { display: flex; align-items: center; gap: 6px; }
   #itr-app .itr-legend .sw { width: 16px; height: 4px; border-radius: 2px; }
   #itr-app .itr-stats-empty { color: var(--itr-muted); font-size: 13px; padding: 22px 0; text-align: center; }
+  /* Student personal diagnosis dashboard */
+  #itr-app .itr-diag-shell { display: flex; flex-direction: column; gap: 14px; }
+  #itr-app .itr-diag-filter { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px; border: 1px solid var(--itr-border); border-radius: 16px; background: var(--itr-surface); box-shadow: var(--itr-shadow-1); }
+  #itr-app .itr-diag-filter-label { font-size: 12px; color: var(--itr-muted); }
+  #itr-app .itr-diag-seg { display: inline-flex; gap: 4px; }
+  #itr-app .itr-diag-seg button { border: 0; border-radius: 10px; padding: 7px 10px; color: var(--itr-muted); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+  #itr-app .itr-diag-seg button.active { color: var(--itr-primary-on-soft); background: var(--itr-primary-soft); box-shadow: inset 0 0 0 1px var(--itr-primary); font-weight: 700; }
+  #itr-app .itr-diag-filter select { width: auto; padding: 7px 28px 7px 9px; font-size: 12px; }
+  #itr-app .itr-diag-tabs { display: inline-flex; gap: 4px; margin-left: auto; }
+  #itr-app .itr-diag-tabs button { border: 0; border-radius: 10px; padding: 7px 10px; color: var(--itr-muted); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+  #itr-app .itr-diag-tabs button.active { color: var(--itr-primary-on-soft); background: var(--itr-primary-soft); box-shadow: inset 0 0 0 1px var(--itr-primary); font-weight: 700; }
+  #itr-app .itr-diag-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+  #itr-app .itr-diag-metric { position: relative; overflow: hidden; min-height: 105px; padding: 17px 18px 15px; border: 1px solid var(--itr-border); border-radius: 20px; background: var(--itr-surface); box-shadow: var(--itr-shadow-1); }
+  #itr-app .itr-diag-metric::before { content: ""; position: absolute; inset: 0 0 auto; height: 4px; background: var(--itr-grad-primary); }
+  #itr-app .itr-diag-metric .k { color: var(--itr-muted); font-size: 12px; }
+  #itr-app .itr-diag-metric .v { margin-top: 7px; color: var(--itr-accent-strong); font-size: 28px; line-height: 1.1; font-weight: 800; }
+  #itr-app .itr-diag-metric .note { margin-top: 8px; color: var(--itr-muted); font-size: 12px; }
+  #itr-app .itr-diag-up { color: var(--itr-accent-strong); font-weight: 700; }
+  #itr-app .itr-diag-grid { display: grid; grid-template-columns: minmax(0,1.55fr) minmax(270px,.85fr); gap: 14px; align-items: start; }
+  #itr-app .itr-diag-panel { padding: 18px 20px; border: 1px solid var(--itr-border); border-radius: 20px; background: var(--itr-surface); box-shadow: var(--itr-shadow-1); }
+  #itr-app .itr-diag-panel + .itr-diag-panel { margin-top: 14px; }
+  #itr-app .itr-diag-panel-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 12px; }
+  #itr-app .itr-diag-panel-head h4 { margin: 0; padding-left: 8px; border-left: 4px solid var(--itr-green); font-size: 15px; }
+  #itr-app .itr-diag-panel-head span { color: var(--itr-muted); font-size: 11px; }
+  #itr-app .itr-diag-chart { overflow: hidden; border: 1px solid var(--itr-border); border-radius: 12px; background: var(--itr-bg); }
+  #itr-app .itr-diag-chart svg { display: block; width: 100%; height: auto; }
+  #itr-app .itr-diag-table-wrap { overflow-x: auto; }
+  #itr-app .itr-diag-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #itr-app .itr-diag-table th { padding: 8px 7px; border-bottom: 1px solid var(--itr-border); color: var(--itr-muted); text-align: left; white-space: nowrap; }
+  #itr-app .itr-diag-table td { padding: 10px 7px; border-bottom: 1px solid var(--itr-border); vertical-align: middle; }
+  #itr-app .itr-diag-table tr:last-child td { border-bottom: 0; }
+  #itr-app .itr-diag-status { font-weight: 700; }
+  #itr-app .itr-diag-status.weak { color: var(--itr-red); }
+  #itr-app .itr-diag-status.good { color: var(--itr-accent-strong); }
+  #itr-app .itr-diag-status.low-sample { color: var(--itr-amber); }
+  #itr-app .itr-diag-ability { margin-bottom: 12px; padding: 6px; border-radius: 9px; cursor: pointer; }
+  #itr-app .itr-diag-ability:hover, #itr-app .itr-diag-ability.active { background: linear-gradient(135deg,rgba(44,191,120,.12),rgba(39,189,222,.12)); }
+  #itr-app .itr-diag-ability-line { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+  #itr-app .itr-diag-ability-line strong { font-size: 13px; }
+  #itr-app .itr-diag-ability-line span { color: var(--itr-muted); }
+  #itr-app .itr-diag-track { height: 8px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: var(--itr-border); }
+  #itr-app .itr-diag-fill { height: 100%; border-radius: 999px; background: var(--itr-grad-primary); }
+  #itr-app .itr-diag-detail { min-height: 58px; margin-top: 8px; padding: 10px; border-radius: 10px; color: var(--itr-accent-strong); background: linear-gradient(135deg,rgba(44,191,120,.12),rgba(39,189,222,.12)); font-size: 12px; line-height: 1.55; }
+  #itr-app .itr-diag-confidence { margin-top: 10px; color: var(--itr-muted); font-size: 11px; line-height: 1.5; }
+  #itr-app .itr-diag-action { padding: 16px; border: 1px solid rgba(44,191,120,.35); border-radius: 20px; background: linear-gradient(135deg,rgba(44,191,120,.12),rgba(39,189,222,.14)); box-shadow: var(--itr-shadow-1); }
+  #itr-app .itr-diag-action h4 { margin: 0 0 8px; font-size: 15px; }
+  #itr-app .itr-diag-action p { margin: 0; font-size: 13px; line-height: 1.65; }
+  #itr-app .itr-diag-source { display: inline-flex; padding: 3px 7px; border-radius: 999px; color: var(--itr-primary-on-soft); background: var(--itr-primary-soft); font-size: 11px; white-space: nowrap; }
+  #itr-app .itr-assignment-wrong-add { margin-top: 8px; }
+  @media (max-width: 760px) {
+    #itr-app .itr-diag-metrics, #itr-app .itr-diag-grid { grid-template-columns: 1fr; }
+    #itr-app .itr-diag-tabs { width: 100%; margin-left: 0; }
+    #itr-app .itr-diag-table th:nth-child(2), #itr-app .itr-diag-table td:nth-child(2) { display: none; }
+  }
   #itr-app .itr-book-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
   #itr-app .itr-book-head h3 { margin: 0; font-size: 15px; }
   #itr-app .itr-book-head .count { font-size: 12px; color: var(--itr-muted); }
@@ -2351,7 +2405,7 @@
   function answerDisplay(q) {
     if (!q) return "—";
     var t = normType(q.type);
-    if (t === "headings") {
+    if (t === "headings" || t === "matching") {
       return (q.items || []).map(function (it, i) { return escapeHtml(it.para) + " → " + escapeHtml(headingOptionValue(q.answer && q.answer[i]) || "—"); }).join("； ");
     }
     if (t === "sentence-end") {
@@ -3173,7 +3227,7 @@
     });
     // persist this practice session's score into the SELECTED students' isolated records
     targetIds.forEach(function (sid) {
-      recordGrade(sid, { ts: Date.now(), pct: pct, right: right, total: total, unanswered: unanswered, level: lvId, exam: ex, examDetail: examDetail });
+      recordGrade(sid, { ts: Date.now(), source: 'practice', pct: pct, right: right, total: total, unanswered: unanswered, level: lvId, exam: ex, byType: cloneData(byType, {}), byExam: cloneData(examDetail, {}), examDetail: cloneData(examDetail, {}) });
     });
     // adaptive difficulty: if enabled, nudge the level selector toward the learner's performance
     var adaptNote = "";
@@ -3274,7 +3328,33 @@
       el.disabled = true;
     });
   }
-  function renderAssignmentQuestionFeedback(card, q, result) {
+  function addAssignmentWrongToBook(assignmentIdValue, questionIdValue, button) {
+    if (!assignmentIdValue || questionIdValue == null) return Promise.resolve(null);
+    if (button) { button.disabled = true; button.classList.add("itr-busy"); button.textContent = "正在保存…"; }
+    return apiV2('/wbook/items', {
+      method: 'POST',
+      body: JSON.stringify({ sourceType: 'assignment', assignmentId: assignmentIdValue, questionId: questionIdValue })
+    }).then(function (res) {
+      if (!res || res.ok !== true || !res.item) throw new Error('服务器未确认错题保存');
+      if (res.state) applyServerState(res.state);
+      else if (Array.isArray(res.data) && currentUser) ownerData(currentUser.id).wbook = cloneData(res.data, []);
+      if (button) { button.disabled = true; button.classList.remove("itr-busy"); button.textContent = res.created === false ? "已在错题本" : "已加入错题本"; }
+      showToast(res.created === false ? '这道题已经在错题本中。' : '已加入错题本，可在「错题复习」中重做。', 'success');
+      return res;
+    }).catch(function (err) {
+      if (button) { button.disabled = false; button.classList.remove("itr-busy"); button.textContent = "加入错题本"; }
+      showToast('添加错题失败：' + err.message, 'error');
+      throw err;
+    });
+  }
+  function assignmentWrongAlreadySaved(assignmentIdValue, questionIdValue) {
+    return getWBook().some(function (item) {
+      var itemAssignmentId = item && (item.assignmentId || item.assignment_id);
+      var itemQuestionId = item && (item.questionId || item.question_id || item.q && (item.q.id || item.q.questionId));
+      return String(itemAssignmentId || '') === String(assignmentIdValue || '') && String(itemQuestionId || '') === String(questionIdValue == null ? '' : questionIdValue);
+    });
+  }
+  function renderAssignmentQuestionFeedback(card, q, result, context) {
     result = result || {};
     if (assignmentHasAnswer(result)) {
       q.answer = q.type === "headings" ? normalizeHeadingAnswer(assignmentCorrectAnswer(result)) : assignmentCorrectAnswer(result);
@@ -3288,7 +3368,8 @@
     var explanation = q.explanation || result.explanation || "（暂无文字解析，可使用 AI 讲解）";
     box.innerHTML = '<div><span class="itr-ans">' + (correct ? "✓ 回答正确" : "✗ 需要订正") + "</span></div>" +
       '<div class="itr-assignment-correct-answer">正确答案：' + answerText + "</div>" +
-      '<div class="itr-exp">' + escapeHtml(explanation).replace(/\n/g, "<br>") + "</div>";
+      '<div class="itr-exp">' + escapeHtml(explanation).replace(/\n/g, "<br>") + "</div>" +
+      (!correct && context && context.assignmentId != null ? '<button type="button" class="itr-btn itr-ghost itr-assignment-wrong-add">加入错题本</button>' : '');
     box.classList.add("show");
     var checkBtn = card.querySelector(".itr-assignment-check");
     if (checkBtn) { checkBtn.disabled = true; checkBtn.textContent = "已核对"; }
@@ -3296,6 +3377,11 @@
     if (showBtn) showBtn.disabled = false;
     var explainBtn = card.querySelector(".itr-assignment-explain");
     if (explainBtn) explainBtn.disabled = false;
+    var wrongButton = card.querySelector('.itr-assignment-wrong-add');
+    if (wrongButton) {
+      if (assignmentWrongAlreadySaved(context.assignmentId, q.id)) { wrongButton.disabled = true; wrongButton.textContent = '已在错题本'; }
+      else wrongButton.addEventListener('click', function () { addAssignmentWrongToBook(context.assignmentId, q.id, wrongButton); });
+    }
     assignmentLockAnswerControls(card);
   }
   function checkAssignmentQuestion(card, q, context) {
@@ -3307,7 +3393,7 @@
     if (button) { button.disabled = true; button.classList.add("itr-busy"); }
     var path = assignmentPath(context.assignmentId, "/questions/" + encodeURIComponent(String(q.id)) + "/check");
     apiV2(path, { method: "POST", body: JSON.stringify({ answer: userAnswer, response: userAnswer }) }).then(function (response) {
-      renderAssignmentQuestionFeedback(card, q, assignmentResponseResult(response));
+      renderAssignmentQuestionFeedback(card, q, assignmentResponseResult(response), context);
     }).catch(function (err) {
       if (button) { button.disabled = false; button.classList.remove("itr-busy"); }
       showToast("核对答案失败：" + err.message);
@@ -4078,7 +4164,7 @@
       if (record && record.explanation) q.explanation = record.explanation;
       if (record && record.userAnswer != null) setAssignmentAnswer(card, q, record.userAnswer);
       if (q.answer != null) checkQuestion(card, q);
-      renderAssignmentQuestionFeedback(card, q, { correct: record ? record.correct : undefined, explanation: q.explanation });
+      renderAssignmentQuestionFeedback(card, q, { correct: record ? record.correct : undefined, explanation: q.explanation }, { assignmentId: assignmentId(detail) });
     });
   }
   function submitAssignmentAnswers(detail, cards, questions, answerEl) {
@@ -4087,6 +4173,7 @@
     questions.forEach(function (q, i) { answers[String(q.id != null ? q.id : i + 1)] = collectAssignmentAnswer(cards[i], q); });
     var button = answerEl.querySelector('#itr-assignment-submit'); if (button) { button.disabled = true; button.classList.add('itr-busy'); }
     apiV2(assignmentPath(id, '/submit'), { method: 'POST', body: JSON.stringify({ assignmentId: id, answers: answers, responses: answers }) }).then(function (res) {
+      if (res && res.state) applyServerState(res.state);
       var submitted = assignmentObjectFromResponse(res) || {};
       var result = assignmentResponseResult(res);
       var merged = Object.assign({}, detail, submitted, { id: id, status: 'submitted', completed: true, result: result });
@@ -4101,7 +4188,7 @@
         if (record && record.correctAnswer != null) questions[i].answer = questions[i].type === 'headings' ? normalizeHeadingAnswer(record.correctAnswer) : record.correctAnswer;
         if (record && record.explanation) questions[i].explanation = record.explanation;
         if (questions[i].answer != null) checkQuestion(card, questions[i]);
-        renderAssignmentQuestionFeedback(card, questions[i], { correct: record ? record.correct : undefined, explanation: questions[i].explanation });
+        renderAssignmentQuestionFeedback(card, questions[i], { correct: record ? record.correct : undefined, explanation: questions[i].explanation }, { assignmentId: id });
       });
       if (button) { button.disabled = true; button.classList.remove('itr-busy'); button.textContent = '已提交'; }
       assignmentState.list = (assignmentState.list || []).map(function (a) { return String(assignmentId(a)) === String(id) ? Object.assign({}, a, { status: 'completed', completed: true }) : a; });
@@ -4810,12 +4897,12 @@
     } else {
       html += '<div class="itr-book-list">';
       book.forEach(function (item, i) {
-        var q = item.q;
+        var q = normalizeAssignmentQuestion(item.q || {}, i);
         html += '<div class="itr-book-item" data-i="' + i + '">' +
           '<div class="row1"><span class="w">' + escapeHtml(typeLabel(q.type)) + (q.exam ? " · " + escapeHtml(q.exam) : "") + '</span>' +
           '<button type="button" class="remove" data-wrm="' + i + '" title="移除">×</button></div>' +
           '<div class="meta">' + escapeHtml(q.prompt).replace(/\n/g, " ") + '</div>' +
-          '<div class="meta" style="color:var(--itr-red)">你的答案：' + escapeHtml(item.userAnswer || "（未作答）") + '</div>' +
+          '<div class="meta" style="color:var(--itr-red)">你的答案：' + escapeHtml(assignmentRawAnswerText(item.userAnswer)) + '</div>' +
           '<div class="meta" style="color:var(--itr-green)">正确答案：' + answerDisplay(q) + '</div>' +
           '<div style="margin-top:8px;"><button type="button" class="itr-btn itr-ghost" data-wredo="' + i + '">重做</button></div>' +
           '</div>';
@@ -4849,7 +4936,7 @@
     }
     function show() {
       if (idx >= queue.length) { finish(); return; }
-      var item = queue[idx]; var q = item.q;
+      var item = queue[idx]; var q = normalizeAssignmentQuestion(item.q || {}, idx);
       var artHtml = item.article ? '<div class="itr-article" style="font-size:12px;max-height:150px;overflow:auto;margin-bottom:10px;">' + renderArticle(item.article) + '</div>' : '';
       panel.innerHTML = '<div class="itr-book-head"><h3>' + ICONS.refresh + ' 错题重做</h3><span class="count">' + (idx + 1) + ' / ' + queue.length + '</span><span class="spacer"></span><button type="button" class="itr-link" id="itr-wr-stop">结束</button></div>' +
         artHtml + '<div class="itr-review-card" id="itr-wr-card"></div>';
@@ -5099,8 +5186,203 @@
     svg += '</svg>';
     return svg;
   }
+  var studentDiagnosisState = { period: "last10", source: "all", exam: "all", view: "overview", ability: "主旨与结构" };
+  var DIAGNOSIS_ABILITIES = [
+    { name: "主旨与结构", types: ["headings", "matching"], detail: "由标题匹配、段落匹配等题型综合反映，重点观察能否抓住段落主旨与篇章结构。" },
+    { name: "证据定位", types: ["true-false-notgiven", "fill-blank", "multiple-choice"], detail: "由判断、填空和细节选择题综合反映，重点观察定位原句与信息核验是否准确。" },
+    { name: "推理与逻辑", types: ["sentence-end", "true-false-notgiven", "multiple-choice"], detail: "由句尾匹配、判断和选择题综合反映，重点观察因果、转折和隐含信息推断。" },
+    { name: "词汇与改写", types: ["vocabulary", "fill-blank"], detail: "由词汇和填空题综合反映，重点观察语境词义、同义替换与答案词形精度。" },
+    { name: "信息整合", types: ["matching", "diagram", "sentence-end"], detail: "由匹配、图表和句尾题综合反映，重点观察跨句、跨段整合信息的能力。" }
+  ];
+  function diagnosisNumber(value) { value = Number(value); return isFinite(value) ? value : 0; }
+  function diagnosisSource(record) { return record && (record.source === "assignment" || record.assignmentId || record.assignment_id) ? "assignment" : "practice"; }
+  function diagnosisTypeData(record) {
+    var data = record && (record.byType || record.typeDetail || record.type_detail);
+    return data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  }
+  function diagnosisExamData(record) {
+    var data = record && (record.byExam || record.examDetail || record.exam_detail);
+    return data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  }
+  function diagnosisBucketTotals(bucket) {
+    bucket = bucket || {};
+    var total = diagnosisNumber(bucket.total || bucket.totalCount);
+    var right = diagnosisNumber(bucket.right != null ? bucket.right : (bucket.correct != null ? bucket.correct : bucket.correctCount));
+    var unanswered = diagnosisNumber(bucket.unanswered != null ? bucket.unanswered : bucket.unansweredCount);
+    return { total: total, right: right, unanswered: unanswered, pct: total ? Math.round(right / total * 100) : diagnosisNumber(bucket.pct) };
+  }
+  function diagnosisRecordTotals(record, exam) {
+    if (exam && exam !== "all") {
+      var exams = diagnosisExamData(record), key = Object.keys(exams).filter(function (name) { return String(name).toUpperCase() === exam; })[0];
+      if (key) return diagnosisBucketTotals(exams[key]);
+    }
+    return diagnosisBucketTotals(record || {});
+  }
+  function diagnosisMatchesExam(record, exam) {
+    if (!exam || exam === "all") return true;
+    if (String(record && record.exam || "").toUpperCase() === exam) return true;
+    return Object.keys(diagnosisExamData(record)).some(function (name) { return String(name).toUpperCase() === exam; });
+  }
+  function diagnosisBaseRecords(records) {
+    var state = studentDiagnosisState;
+    return (records || []).filter(function (record) {
+      return (state.source === "all" || diagnosisSource(record) === state.source) && diagnosisMatchesExam(record, state.exam);
+    }).sort(function (a, b) { return diagnosisNumber(a.ts) - diagnosisNumber(b.ts); });
+  }
+  function diagnosisFilteredRecords(records) {
+    var base = diagnosisBaseRecords(records), state = studentDiagnosisState;
+    if (state.period === "last10") return base.slice(-10);
+    if (state.period === "30days") {
+      var cutoff = Date.now() - 30 * 86400000;
+      return base.filter(function (record) { return diagnosisNumber(record.ts) >= cutoff; });
+    }
+    return base;
+  }
+  function diagnosisTotals(records) {
+    var total = 0, right = 0, unanswered = 0;
+    (records || []).forEach(function (record) {
+      var values = diagnosisRecordTotals(record, studentDiagnosisState.exam);
+      total += values.total; right += values.right; unanswered += values.unanswered;
+    });
+    return { total: total, right: right, unanswered: unanswered, pct: total ? Math.round(right / total * 100) : 0 };
+  }
+  function diagnosisAggregateTypes(records) {
+    var out = {};
+    (records || []).forEach(function (record) {
+      var data = diagnosisTypeData(record);
+      Object.keys(data).forEach(function (type) {
+        var normalized = normType(type), values = diagnosisBucketTotals(data[type]);
+        if (!out[normalized]) out[normalized] = { right: 0, total: 0, unanswered: 0 };
+        out[normalized].right += values.right; out[normalized].total += values.total; out[normalized].unanswered += values.unanswered;
+      });
+    });
+    Object.keys(out).forEach(function (type) { out[type].pct = out[type].total ? Math.round(out[type].right / out[type].total * 100) : 0; });
+    return out;
+  }
+  function diagnosisTypeAbility(type) {
+    var names = DIAGNOSIS_ABILITIES.filter(function (ability) { return ability.types.indexOf(type) !== -1; }).map(function (ability) { return ability.name; });
+    return names.length ? names.slice(0, 2).join(" / ") : "综合阅读";
+  }
+  function diagnosisTypeTrend(type, records) {
+    var split = Math.max(1, Math.floor(records.length / 2));
+    var first = diagnosisAggregateTypes(records.slice(0, split))[type] || { total: 0, pct: 0 };
+    var second = diagnosisAggregateTypes(records.slice(split))[type] || { total: 0, pct: 0 };
+    return first.total && second.total ? second.pct - first.pct : null;
+  }
+  function diagnosisWeakType(types) {
+    var values = Object.keys(types).map(function (type) { return { type: type, right: types[type].right, total: types[type].total, pct: types[type].pct }; });
+    values.sort(function (a, b) { return a.pct - b.pct || b.total - a.total; });
+    return values[0] || null;
+  }
+  function diagnosisAbilityData(types) {
+    return DIAGNOSIS_ABILITIES.map(function (ability) {
+      var total = 0, right = 0;
+      ability.types.forEach(function (type) { var item = types[type]; if (item) { total += item.total; right += item.right; } });
+      return { name: ability.name, types: ability.types, detail: ability.detail, total: total, right: right, pct: total ? Math.round(right / total * 100) : 0 };
+    });
+  }
+  function diagnosisDate(ts) {
+    var date = new Date(diagnosisNumber(ts));
+    if (isNaN(date.getTime())) return "—";
+    return (date.getMonth() + 1) + "/" + date.getDate();
+  }
+  function drawDiagnosisTrend(records) {
+    var values = records.slice(-20), W = 720, H = 235, left = 48, right = 18, top = 18, bottom = 42;
+    if (!values.length) return '<div class="itr-stats-empty">当前筛选下暂无趋势数据。</div>';
+    var width = W - left - right, height = H - top - bottom;
+    function x(index) { return left + (values.length <= 1 ? width / 2 : width * index / (values.length - 1)); }
+    function y(pct) { return top + height * (1 - pct / 100); }
+    var single = values.map(function (record) { return diagnosisRecordTotals(record, studentDiagnosisState.exam).pct; });
+    var moving = single.map(function (_, index) { var start = Math.max(0, index - 2), slice = single.slice(start, index + 1); return Math.round(slice.reduce(function (sum, value) { return sum + value; }, 0) / slice.length); });
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="正确率趋势">';
+    [0,25,50,75,100].forEach(function (tick) { var py = y(tick); svg += '<line class="itr-c-grid" x1="' + left + '" y1="' + py + '" x2="' + (W-right) + '" y2="' + py + '"/><text class="itr-c-tick" x="' + (left-7) + '" y="' + (py+4) + '" text-anchor="end" font-size="11">' + tick + '%</text>'; });
+    svg += '<polyline points="' + single.map(function (value, index) { return x(index) + ',' + y(value); }).join(' ') + '" fill="none" stroke="#27BDDE" stroke-width="2" stroke-dasharray="4 4"/>';
+    svg += '<polyline points="' + moving.map(function (value, index) { return x(index) + ',' + y(value); }).join(' ') + '" fill="none" stroke="#0089FE" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>';
+    single.forEach(function (value, index) { svg += '<circle cx="' + x(index) + '" cy="' + y(value) + '" r="4" fill="#fff" stroke="#0089FE" stroke-width="2"><title>' + diagnosisDate(values[index].ts) + ' · ' + value + '%</title></circle>'; });
+    var labelIndexes = values.length <= 5 ? values.map(function (_, index) { return index; }) : [0, Math.floor((values.length-1)/4), Math.floor((values.length-1)/2), Math.floor((values.length-1)*3/4), values.length-1];
+    labelIndexes.filter(function (index, position, all) { return all.indexOf(index) === position; }).forEach(function (index) { svg += '<text class="itr-c-tick" x="' + x(index) + '" y="' + (H-15) + '" text-anchor="middle" font-size="10">' + diagnosisDate(values[index].ts) + '</text>'; });
+    svg += '</svg>';
+    return svg;
+  }
+  function diagnosisViewOverview(records, allRecords) {
+    var totals = diagnosisTotals(records), types = diagnosisAggregateTypes(records), weak = diagnosisWeakType(types), base = diagnosisBaseRecords(allRecords);
+    var prior = studentDiagnosisState.period === "last10" && base.length > 10 ? base.slice(-20, -10) : [];
+    var priorPct = diagnosisTotals(prior).pct, delta = prior.length ? totals.pct - priorPct : null;
+    var typeCount = Object.keys(types).length, exams = {};
+    records.forEach(function (record) { Object.keys(diagnosisExamData(record)).forEach(function (exam) { exams[exam] = true; }); if (record.exam) exams[record.exam] = true; });
+    var html = '<div class="itr-diag-metrics">' +
+      '<div class="itr-diag-metric"><div class="k">近期正确率</div><div class="v">' + totals.pct + '%</div><div class="note">' + (delta == null ? '继续练习后显示阶段对比' : '<span class="itr-diag-up">' + (delta >= 0 ? '↑ ' : '↓ ') + Math.abs(delta) + ' 个百分点</span> · 对比前 10 次') + '</div></div>' +
+      '<div class="itr-diag-metric"><div class="k">练习覆盖</div><div class="v">' + totals.total + ' 题</div><div class="note">' + typeCount + ' 类题型 · ' + Object.keys(exams).length + ' 类考试数据</div></div>' +
+      '<div class="itr-diag-metric"><div class="k">当前最需提升</div><div class="v" style="font-size:21px;margin-top:10px;">' + escapeHtml(weak ? diagnosisTypeAbility(weak.type).split(' / ')[0] : '等待数据') + '</div><div class="note">' + (weak ? escapeHtml(typeLabel(weak.type)) + ' ' + weak.pct + '% · ' + weak.total + ' 题' : '完成含分项数据的练习后生成') + '</div></div></div>';
+    html += '<div class="itr-diag-grid"><div><div class="itr-diag-panel"><div class="itr-diag-panel-head"><h4>正确率趋势</h4><span>青色虚线为单次成绩，蓝色实线为 3 次移动平均；横轴为真实日期</span></div><div class="itr-diag-chart">' + drawDiagnosisTrend(records) + '</div></div>';
+    html += '<div class="itr-diag-panel"><div class="itr-diag-panel-head"><h4>题型表现矩阵</h4><span>优先展示真正需要处理的题型</span></div>' + diagnosisTypeTable(types, records) + '</div></div>';
+    html += '<div><div class="itr-diag-panel"><div class="itr-diag-panel-head"><h4>阅读能力画像</h4><span>点击一项查看题型构成</span></div>' + diagnosisAbilityMarkup(types) + '</div>' + diagnosisRecommendation(weak) + '</div></div>';
+    return html;
+  }
+  function diagnosisTypeTable(types, records) {
+    var rows = Object.keys(types).map(function (type) { return { type: type, data: types[type], trend: diagnosisTypeTrend(type, records) }; });
+    rows.sort(function (a, b) { var aSample = a.data.total < 10 ? 1 : 0, bSample = b.data.total < 10 ? 1 : 0; return aSample - bSample || a.data.pct - b.data.pct; });
+    if (!rows.length) return '<div class="itr-stats-empty">旧成绩只有总分，没有题型分项；完成一次新练习或题卡作业后，这里会开始形成画像。</div>';
+    var html = '<div class="itr-diag-table-wrap"><table class="itr-diag-table"><thead><tr><th>题型</th><th>对应能力</th><th>题量</th><th>正确率</th><th>趋势</th><th>判断</th></tr></thead><tbody>';
+    rows.forEach(function (row) {
+      var data = row.data, trendText = row.trend == null ? '—' : ((row.trend > 0 ? '↑ ' : (row.trend < 0 ? '↓ ' : '→ ')) + Math.abs(row.trend) + 'pp');
+      var status = data.total < 10 ? ['样本不足','low-sample'] : (data.pct < 65 ? ['优先训练','weak'] : (row.trend != null && row.trend >= 8 ? ['明显进步','good'] : ['继续巩固','good']));
+      html += '<tr><td><strong>' + escapeHtml(typeLabel(row.type)) + '</strong></td><td>' + escapeHtml(diagnosisTypeAbility(row.type)) + '</td><td>' + data.total + '</td><td>' + data.pct + '%</td><td class="' + (row.trend != null && row.trend > 0 ? 'itr-diag-up' : '') + '">' + trendText + '</td><td class="itr-diag-status ' + status[1] + '">' + status[0] + '</td></tr>';
+    });
+    return html + '</tbody></table></div>';
+  }
+  function diagnosisAbilityMarkup(types) {
+    var abilities = diagnosisAbilityData(types), selected = abilities.filter(function (item) { return item.name === studentDiagnosisState.ability; })[0] || abilities[0];
+    var html = '';
+    abilities.forEach(function (ability) {
+      html += '<div class="itr-diag-ability' + (selected && selected.name === ability.name ? ' active' : '') + '" data-diag-ability="' + escapeHtml(ability.name) + '"><div class="itr-diag-ability-line"><strong>' + escapeHtml(ability.name) + '</strong><span>' + (ability.total ? ability.pct : '—') + (ability.total ? ' · ' + ability.total + '题' : ' · 暂无样本') + '</span></div><div class="itr-diag-track"><div class="itr-diag-fill" style="width:' + ability.pct + '%"></div></div></div>';
+    });
+    html += '<div class="itr-diag-detail" id="itr-diag-ability-detail">' + escapeHtml((selected ? selected.name + '：' + selected.detail : '完成更多练习后生成能力解释。')) + '</div>';
+    html += '<div class="itr-diag-confidence">能力分不是官方考试分数。每项同时显示题量；少于 20 题时仅作趋势参考，避免用少量练习过度判断。</div>';
+    return html;
+  }
+  function diagnosisRecommendation(weak) {
+    var type = weak ? typeLabel(weak.type) : '综合阅读', count = weak && weak.total < 20 ? 8 : 12;
+    return '<div class="itr-diag-action"><h4>下一步只做一件事</h4><p>完成一组 <strong>' + count + ' 题' + escapeHtml(type) + '专项</strong>。' + escapeHtml(weak ? (TYPE_ADVICE[weak.type] || '重点复盘原文定位与同义替换。') : '先积累一组包含多种题型的有效成绩，系统会自动找出薄弱环节。') + '</p></div>';
+  }
+  function diagnosisAbilityView(records) {
+    var types = diagnosisAggregateTypes(records);
+    return '<div class="itr-diag-panel"><div class="itr-diag-panel-head"><h4>能力与题型关联</h4><span>能力由实际题目结果按固定映射聚合，不使用主观打分</span></div>' + diagnosisAbilityMarkup(types) + '<div style="margin-top:14px;">' + diagnosisTypeTable(types, records) + '</div></div>';
+  }
+  function diagnosisHistoryView(records) {
+    if (!records.length) return '<div class="itr-diag-panel"><div class="itr-stats-empty">当前筛选下暂无练习记录。</div></div>';
+    var html = '<div class="itr-diag-panel"><div class="itr-diag-panel-head"><h4>练习记录</h4><span>普通练习与题卡作业使用同一档案，可回看来源与薄弱题型</span></div><div class="itr-diag-table-wrap"><table class="itr-diag-table"><thead><tr><th>日期</th><th>来源</th><th>考试 / 难度</th><th>题量</th><th>正确率</th><th>最弱题型</th></tr></thead><tbody>';
+    records.slice().sort(function (a,b) { return diagnosisNumber(b.ts)-diagnosisNumber(a.ts); }).forEach(function (record) {
+      var totals = diagnosisRecordTotals(record, studentDiagnosisState.exam), weak = diagnosisWeakType(diagnosisAggregateTypes([record]));
+      var date = new Date(diagnosisNumber(record.ts)), dateText = isNaN(date.getTime()) ? '—' : (date.getMonth()+1) + '月' + date.getDate() + '日';
+      var examText = studentDiagnosisState.exam !== 'all' ? studentDiagnosisState.exam : (record.exam || Object.keys(diagnosisExamData(record)).join(' / ') || '—');
+      html += '<tr><td>' + dateText + '</td><td><span class="itr-diag-source">' + (diagnosisSource(record) === 'assignment' ? '题卡作业' : '普通练习') + '</span></td><td>' + escapeHtml(String(examText)) + (record.level ? ' · L' + diagnosisNumber(record.level) : '') + '</td><td>' + totals.total + '</td><td><strong>' + totals.pct + '%</strong></td><td>' + escapeHtml(weak ? typeLabel(weak.type) : '—') + '</td></tr>';
+    });
+    return html + '</tbody></table></div></div>';
+  }
+  function renderStudentDiagnosis(panel) {
+    var allRecords = getGrades(currentUser.id), records = diagnosisFilteredRecords(allRecords), state = studentDiagnosisState;
+    var html = '<div class="itr-diag-shell"><div class="itr-stats-head"><div><h3>' + ICONS.trend + ' 学生个人诊断</h3><div class="itr-stu-hint">先看是否进步，再看哪里薄弱，最后给出下一步训练方向。</div></div><span class="spacer"></span><button type="button" class="itr-btn-sm" id="itr-stats-export">' + ICONS.down + ' 导出 PDF</button><button type="button" class="itr-link" id="itr-stats-close">收起</button></div>';
+    html += '<div class="itr-diag-filter"><span class="itr-diag-filter-label">时间</span><div class="itr-diag-seg">' + [['last10','近 10 次'],['30days','近 30 天'],['all','全部']].map(function (item) { return '<button type="button" data-diag-period="' + item[0] + '" class="' + (state.period === item[0] ? 'active' : '') + '">' + item[1] + '</button>'; }).join('') + '</div>';
+    html += '<span class="itr-diag-filter-label">来源</span><select id="itr-diag-source"><option value="all">全部来源</option><option value="practice"' + (state.source === 'practice' ? ' selected' : '') + '>普通练习</option><option value="assignment"' + (state.source === 'assignment' ? ' selected' : '') + '>题卡作业</option></select>';
+    html += '<span class="itr-diag-filter-label">考试</span><select id="itr-diag-exam"><option value="all">IELTS + TOEFL</option><option value="IELTS"' + (state.exam === 'IELTS' ? ' selected' : '') + '>IELTS</option><option value="TOEFL"' + (state.exam === 'TOEFL' ? ' selected' : '') + '>TOEFL</option></select>';
+    html += '<div class="itr-diag-tabs">' + [['overview','总览'],['ability','能力与题型'],['history','练习记录']].map(function (item) { return '<button type="button" data-diag-view="' + item[0] + '" class="' + (state.view === item[0] ? 'active' : '') + '">' + item[1] + '</button>'; }).join('') + '</div></div>';
+    if (!allRecords.length) html += '<div class="itr-diag-panel"><div class="itr-stats-empty">还没有成绩记录。完成普通练习或题卡作业并「提交批改与分析」后，这里会自动形成个人诊断。</div></div>';
+    else if (state.view === 'ability') html += diagnosisAbilityView(records);
+    else if (state.view === 'history') html += diagnosisHistoryView(records);
+    else html += diagnosisViewOverview(records, allRecords);
+    panel.innerHTML = html + '</div>'; panel.classList.add('open');
+    panel.querySelectorAll('[data-diag-period]').forEach(function (button) { button.addEventListener('click', function () { studentDiagnosisState.period = button.getAttribute('data-diag-period'); renderStats(); }); });
+    panel.querySelectorAll('[data-diag-view]').forEach(function (button) { button.addEventListener('click', function () { studentDiagnosisState.view = button.getAttribute('data-diag-view'); renderStats(); }); });
+    var source = $('itr-diag-source'); if (source) source.addEventListener('change', function () { studentDiagnosisState.source = source.value; renderStats(); });
+    var exam = $('itr-diag-exam'); if (exam) exam.addEventListener('change', function () { studentDiagnosisState.exam = exam.value; renderStats(); });
+    panel.querySelectorAll('[data-diag-ability]').forEach(function (item) { item.addEventListener('click', function () { studentDiagnosisState.ability = item.getAttribute('data-diag-ability'); var types = diagnosisAggregateTypes(diagnosisFilteredRecords(getGrades(currentUser.id))), ability = diagnosisAbilityData(types).filter(function (entry) { return entry.name === studentDiagnosisState.ability; })[0]; panel.querySelectorAll('[data-diag-ability]').forEach(function (entry) { entry.classList.toggle('active', entry === item); }); var detail = $('itr-diag-ability-detail'); if (detail && ability) detail.textContent = ability.name + '：' + ability.detail; }); });
+    var close = $('itr-stats-close'); if (close) close.addEventListener('click', function () { switchTab('practice'); });
+    var exportButton = $('itr-stats-export'); if (exportButton) exportButton.addEventListener('click', exportScorePDF);
+  }
   function renderStats() {
     var panel = $("itr-stats-panel"); if (!panel) return;
+    if (currentUser && currentUser.role === 'student') { renderStudentDiagnosis(panel); return; }
     var compare = $("itr-stats-cmp") && $("itr-stats-cmp").checked;
     var metric = $("itr-stats-metric") ? $("itr-stats-metric").value : "pct";
     var group = ($("itr-stats-group") && $("itr-stats-group").value) || "all";

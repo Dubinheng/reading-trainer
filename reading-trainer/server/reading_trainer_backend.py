@@ -611,6 +611,138 @@ class ReadingTrainerStore:
                 "data": sanitize_json(updated),
             }
 
+    @staticmethod
+    def _wbook_item_identity(item: Mapping[str, Any]) -> tuple[str, ...]:
+        """Return a stable identity for one wrong-book item.
+
+        Assignment items have an explicit server-owned key.  Legacy/practice
+        records do not always carry one, so fall back to an explicit id and
+        finally a deterministic question fingerprint.  The fallback keeps a
+        retry of the active endpoint idempotent without changing old records.
+        """
+
+        assignment_id = _safe_text(item.get("assignmentId") or item.get("assignment_id"), 200)
+        question_id = _safe_text(item.get("questionId") or item.get("question_id"), 200)
+        if not question_id and isinstance(item.get("q"), Mapping):
+            question = item.get("q")
+            question_id = _safe_text(
+                question.get("questionId") or question.get("id") or question.get("key"), 200
+            )
+        if assignment_id and question_id:
+            return ("assignment", assignment_id, question_id)
+        explicit_id = _safe_text(item.get("id") or item.get("wrongId") or item.get("wrong_id"), 200)
+        if explicit_id:
+            return ("id", explicit_id)
+        question = item.get("q") if isinstance(item.get("q"), Mapping) else item
+        try:
+            fingerprint = hashlib.sha256(_json_dumps(sanitize_json(question)).encode("utf-8")).hexdigest()
+        except (TypeError, ValueError):
+            fingerprint = hashlib.sha256(str(question).encode("utf-8")).hexdigest()
+        return ("question", fingerprint)
+
+    def upsert_wbook_item(self, owner_id: str, item: Mapping[str, Any]) -> dict[str, Any]:
+        """Append one wrong-book item atomically and de-duplicate retries.
+
+        The SQLite ``documents`` row remains the single source of truth.  A
+        single ``BEGIN IMMEDIATE`` transaction makes two browser retries safe,
+        while the returned shape mirrors ``upsert_vbook_item`` for the active
+        wrong-book API.
+        """
+
+        owner_id = _safe_text(owner_id, 200)
+        if not owner_id:
+            raise ValueError("owner id is required")
+        if not isinstance(item, Mapping):
+            raise ValueError("wrong-book item is invalid")
+        incoming = dict(sanitize_json(dict(item)))
+
+        question_raw = incoming.get("q")
+        if not isinstance(question_raw, Mapping):
+            question_raw = incoming.get("question")
+        if not isinstance(question_raw, Mapping):
+            # Accept the compact active-client shape where question fields are
+            # posted alongside metadata instead of nested under ``q``.
+            metadata_keys = {
+                "ownerId", "owner_id", "sourceType", "source_type", "assignmentId", "assignment_id",
+                "assignmentTitle", "assignment_title", "questionId", "question_id", "userAnswer",
+                "user_answer", "user", "article", "articleIndex", "article_index", "sectionIndex",
+                "section_index", "section", "box", "ts", "id", "wrongId", "wrong_id",
+            }
+            question_raw = {key: value for key, value in incoming.items() if key not in metadata_keys}
+        if not isinstance(question_raw, Mapping) or not question_raw:
+            raise ValueError("question is required")
+        question = dict(sanitize_json(dict(question_raw)))
+
+        assignment_id = _safe_text(incoming.get("assignmentId") or incoming.get("assignment_id"), 200)
+        question_id = _safe_text(
+            incoming.get("questionId")
+            or incoming.get("question_id")
+            or question.get("questionId")
+            or question.get("id")
+            or question.get("key"),
+            200,
+        )
+        if question_id:
+            incoming["questionId"] = question_id
+            question.setdefault("questionId", question_id)
+            question.setdefault("id", question_id)
+        if assignment_id:
+            incoming["assignmentId"] = assignment_id
+        source_type = _safe_text(incoming.get("sourceType") or incoming.get("source_type"), 50).lower()
+        if source_type:
+            incoming["sourceType"] = source_type
+        incoming.pop("ownerId", None)
+        incoming.pop("owner_id", None)
+        incoming.pop("question", None)
+        incoming["q"] = question
+        if "userAnswer" not in incoming:
+            for alias in ("user_answer", "user"):
+                if alias in incoming:
+                    incoming["userAnswer"] = incoming.get(alias)
+                    break
+        incoming.setdefault("box", 1)
+        incoming.setdefault("ts", int(time.time() * 1000))
+        identity = self._wbook_item_identity(incoming)
+
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT data_json FROM documents WHERE owner_id = ? AND section = ?",
+                (owner_id, "wbook"),
+            ).fetchone()
+            try:
+                book = json.loads(row[0]) if row else []
+            except (TypeError, ValueError):
+                book = []
+            if not isinstance(book, list):
+                book = []
+
+            for existing in book:
+                if not isinstance(existing, Mapping):
+                    continue
+                if self._wbook_item_identity(existing) == identity:
+                    return {
+                        "created": False,
+                        "item": sanitize_json(dict(existing)),
+                        "data": sanitize_json(book),
+                    }
+
+            updated = [incoming, *book][:150]
+            serialized = _json_dumps(updated)
+            if len(serialized.encode("utf-8")) > 5 * 1024 * 1024:
+                raise ValueError("document is too large")
+            now = _now()
+            connection.execute(
+                "INSERT INTO documents(owner_id, section, data_json, updated_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(owner_id, section) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at",
+                (owner_id, "wbook", serialized, now),
+            )
+            return {
+                "created": True,
+                "item": sanitize_json(incoming),
+                "data": sanitize_json(updated),
+            }
+
     def list_documents(self, sections: Iterable[str] | None = None) -> list[dict[str, Any]]:
         values = tuple(sections or ())
         with self.connect() as connection:
@@ -1292,7 +1424,11 @@ class ReadingTrainerStore:
         return (self._question_check_row(row) if row else None), bool(before)
 
     def record_assignment_outcomes(
-        self, student_id: str, assignment_id: str, result: Mapping[str, Any]
+        self,
+        student_id: str,
+        assignment_id: str,
+        result: Mapping[str, Any],
+        assignment: Mapping[str, Any] | None = None,
     ) -> dict[str, int]:
         """Write a first submission to the student's existing grade/wrong books.
 
@@ -1306,6 +1442,15 @@ class ReadingTrainerStore:
         if not student_id or not assignment_id:
             return {"grades": 0, "wrong": 0}
         clean_result = sanitize_json(dict(result))
+        if not isinstance(clean_result, Mapping):
+            clean_result = {}
+        assignment_data: Mapping[str, Any] | None = assignment if isinstance(assignment, Mapping) else None
+        if assignment_data is None:
+            assignment_data = self.get_assignment(assignment_id, student_id=student_id)
+        assignment_title = _safe_text(
+            (assignment_data.get("title") or assignment_data.get("name")) if assignment_data else "",
+            500,
+        )
         grades = self.get_document(student_id, "grades", [])
         grades = list(grades) if isinstance(grades, list) else []
         grade_exists = any(
@@ -1319,6 +1464,9 @@ class ReadingTrainerStore:
                 {
                     "id": f"assignment:{assignment_id}",
                     "assignmentId": assignment_id,
+                    "source": "assignment",
+                    "assignmentTitle": assignment_title,
+                    "title": assignment_title,
                     "ts": clean_result.get("submittedAt") or _now() * 1000,
                     "pct": clean_result.get("pct", 0),
                     "right": clean_result.get("right", clean_result.get("correct", 0)),
@@ -1337,37 +1485,76 @@ class ReadingTrainerStore:
         wrong_book = list(wrong_book) if isinstance(wrong_book, list) else []
         wrong_written = 0
         if isinstance(wrong_items, list):
+            # Reuse the same identity helper as the active API.  In
+            # particular, this handles legacy rows whose question id is only
+            # present inside ``q`` and avoids conditional-expression
+            # precedence bugs when ``q`` is not a mapping.
             existing_keys = {
-                (str(item.get("assignmentId") or item.get("assignment_id") or ""),
-                 str(item.get("questionId") or item.get("id") or ""))
+                self._wbook_item_identity(item)
                 for item in wrong_book
                 if isinstance(item, Mapping)
             }
             for item in wrong_items:
                 if not isinstance(item, Mapping):
                     continue
-                question_id = str(item.get("questionId") or item.get("id") or "")
-                key = (assignment_id, question_id)
+                question_id = _safe_text(
+                    item.get("questionId") or item.get("question_id") or item.get("id"), 200
+                )
+                question_value = item.get("q")
+                if not question_id and isinstance(question_value, Mapping):
+                    question_id = _safe_text(
+                        question_value.get("questionId") or question_value.get("id") or question_value.get("key"),
+                        200,
+                    )
+                key = ("assignment", assignment_id, question_id)
                 if not question_id or key in existing_keys:
                     continue
+                snapshot = (
+                    _assignment_question_snapshot(assignment_data, question_id, fallback=item)
+                    if assignment_data
+                    else None
+                )
+                if not isinstance(snapshot, Mapping):
+                    fallback_question = item.get("q") if isinstance(item.get("q"), Mapping) else {}
+                    snapshot = {
+                        "q": sanitize_json(dict(fallback_question)),
+                        "article": item.get("article", ""),
+                        "articleIndex": item.get("articleIndex"),
+                        "sectionIndex": item.get("sectionIndex"),
+                        "sectionTitle": item.get("sectionTitle", ""),
+                        "sectionId": item.get("sectionId", ""),
+                        "section": item.get("section"),
+                    }
+                question_snapshot = snapshot.get("q") if isinstance(snapshot.get("q"), Mapping) else {}
+                question_snapshot = dict(question_snapshot)
+                # Preserve the trusted grading answer/explanation even when a
+                # legacy assignment question omitted those aliases.
+                if "answer" not in question_snapshot and item.get("correctAnswer") is not None:
+                    question_snapshot["answer"] = item.get("correctAnswer")
+                if not question_snapshot.get("explanation") and item.get("explanation") is not None:
+                    question_snapshot["explanation"] = item.get("explanation")
+                question_snapshot.setdefault("id", question_id)
+                question_snapshot.setdefault("questionId", question_id)
+                article = snapshot.get("article") or item.get("article", "")
+                wrong_entry = {
+                    "assignmentId": assignment_id,
+                    "questionId": question_id,
+                    "sourceType": "assignment",
+                    "assignmentTitle": assignment_title,
+                    "q": sanitize_json(question_snapshot),
+                    "userAnswer": item.get("userAnswer"),
+                    "article": article,
+                    "articleIndex": snapshot.get("articleIndex"),
+                    "sectionIndex": snapshot.get("sectionIndex"),
+                    "sectionTitle": snapshot.get("sectionTitle", ""),
+                    "sectionId": snapshot.get("sectionId", ""),
+                    "section": snapshot.get("section"),
+                    "box": 1,
+                    "ts": clean_result.get("submittedAt") or _now() * 1000,
+                }
                 wrong_book.insert(
                     0,
-                    {
-                        "assignmentId": assignment_id,
-                        "questionId": question_id,
-                        "q": {
-                            "id": question_id,
-                            "type": item.get("type"),
-                            "exam": item.get("exam"),
-                            "prompt": item.get("prompt", ""),
-                            "answer": item.get("correctAnswer"),
-                            "explanation": item.get("explanation"),
-                        },
-                        "userAnswer": item.get("userAnswer"),
-                        "article": item.get("article", ""),
-                        "box": 1,
-                        "ts": clean_result.get("submittedAt") or _now() * 1000,
-                    },
+                    wrong_entry,
                 )
                 existing_keys.add(key)
                 wrong_written += 1
@@ -1762,6 +1949,14 @@ def _stable_business_key(section: str, owner_id: str, value: Any, index: int = 0
                 return f"assignments:{assignment_id}:{student_id}"
             if assignment_id not in (None, ""):
                 return f"assignments:{assignment_id}"
+        if section == "wbook":
+            assignment_id = value.get("assignment_id") or value.get("assignmentId")
+            question_id = value.get("question_id") or value.get("questionId")
+            if not question_id and isinstance(value.get("q"), Mapping):
+                question = value.get("q")
+                question_id = question.get("questionId") or question.get("id") or question.get("key")
+            if assignment_id not in (None, "") and question_id not in (None, ""):
+                return f"wbook:{owner_id}:{assignment_id}:{question_id}"
         for candidate in ("business_key", "businessKey", "id", "uid", "key", "code"):
             if value.get(candidate) not in (None, ""):
                 return f"{section}:{owner_id}:{_safe_text(value[candidate], 200)}"
@@ -2140,6 +2335,118 @@ def _assignment_question_list(assignment: Mapping[str, Any]) -> list[dict[str, A
                 item.setdefault("_question_index", index)
                 flattened.append(item)
     return flattened
+
+
+def _context_text(value: Any) -> str:
+    """Extract an article/passage string from a section-like mapping."""
+
+    if not isinstance(value, Mapping):
+        return ""
+    for key in ("article", "passage", "text", "content", "source", "context"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    return ""
+
+
+def _assignment_question_snapshot(
+    assignment: Mapping[str, Any],
+    question_id: Any,
+    *,
+    fallback: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return a complete, answer-bearing question snapshot plus source context.
+
+    Assignment detail responses intentionally redact answer keys before a
+    student submits.  Wrong-book persistence runs on the trusted server-side
+    assignment and therefore uses the original question object, retaining all
+    renderer fields (options/items/headings/steps/beginnings/endings) and the
+    answer/explanation.  Section/article metadata is copied alongside the
+    question so a later wrong-book review does not depend on a mutable article
+    library entry.
+    """
+
+    requested_id = _safe_text(question_id, 200)
+    if not requested_id:
+        return None
+    questions = _assignment_question_list(assignment)
+    selected: Mapping[str, Any] | None = None
+    selected_index = -1
+    for index, candidate in enumerate(questions):
+        if _assignment_question_id(candidate, index) == requested_id:
+            selected = candidate
+            selected_index = index
+            break
+    if selected is None:
+        if isinstance(fallback, Mapping):
+            selected = fallback
+        else:
+            return None
+
+    question = dict(sanitize_json(dict(selected)))
+    question.pop("_section_index", None)
+    question.pop("_question_index", None)
+    question.pop("_section_exam", None)
+    question["id"] = requested_id
+    question.setdefault("questionId", requested_id)
+    # Normalize alternate answer-key aliases for the browser's shared
+    # ``renderQuestion``/``checkQuestion`` path while retaining every original
+    # field in the snapshot.
+    if "answer" not in question:
+        has_key, answer = _assignment_answer_key(selected)
+        if has_key:
+            question["answer"] = sanitize_json(answer)
+
+    sections = assignment.get("sections")
+    section_index: int | None = None
+    section: Mapping[str, Any] | None = None
+    if isinstance(selected, Mapping) and selected.get("_section_index") is not None:
+        try:
+            section_index = int(selected.get("_section_index"))
+        except (TypeError, ValueError):
+            section_index = None
+    if section_index is not None and isinstance(sections, list) and 0 <= section_index < len(sections):
+        candidate_section = sections[section_index]
+        if isinstance(candidate_section, Mapping):
+            section = candidate_section
+
+    article = _context_text(section)
+    if not article:
+        article = _context_text(assignment)
+    if not article:
+        article = _context_text(selected)
+    section_title = ""
+    section_id = ""
+    if section:
+        section_title = _safe_text(
+            section.get("title") or section.get("name") or section.get("heading") or section.get("label"),
+            500,
+        )
+        section_id = _safe_text(section.get("id") or section.get("sectionId") or section.get("key"), 200)
+
+    # Keep useful section metadata but avoid duplicating every question in the
+    # wrong-book item; the complete selected question is already persisted in
+    # ``q`` above.
+    section_context: dict[str, Any] | None = None
+    if section is not None:
+        section_context = {
+            str(key): value
+            for key, value in section.items()
+            if str(key) not in {"questions", "items"}
+        }
+        section_context = sanitize_json(section_context)
+
+    result: dict[str, Any] = {
+        "q": question,
+        "article": article,
+        "articleIndex": section_index,
+        "sectionIndex": section_index,
+        "sectionTitle": section_title,
+        "sectionId": section_id,
+        "section": section_context,
+        "questionIndex": selected_index if selected_index >= 0 else None,
+    }
+    return sanitize_json(result)
 
 
 def _assignment_question_id(question: Mapping[str, Any], index: int) -> str:
@@ -3117,6 +3424,99 @@ def _create_blueprint(store: ReadingTrainerStore):
             }
         )
 
+    @bp.post("/wbook/items")
+    def wrongbook_item_create():
+        """Append a server-confirmed, idempotent wrong-book item.
+
+        Assignment-origin items are checked against the authoritative SQLite
+        assignment and recipient rows.  The browser cannot manufacture a
+        question snapshot or write a different student's wrong book by merely
+        posting an ``assignmentId``.
+        """
+
+        user, error = _auth_required(store, ("student", "teacher", "admin"))
+        if error:
+            return error
+        payload = _json_body()
+        payload = payload if isinstance(payload, Mapping) else {}
+        owner_id = _safe_text(payload.get("ownerId") or payload.get("owner_id") or user.get("id"), 200)
+        if not owner_id or not _authorized_owner(store, user, owner_id):
+            return _error("insufficient permissions", 403, "forbidden")
+
+        item = dict(payload)
+        item.pop("ownerId", None)
+        item.pop("owner_id", None)
+        source_type = _safe_text(item.get("sourceType") or item.get("source_type"), 50).lower()
+        assignment_id = _safe_text(item.get("assignmentId") or item.get("assignment_id"), 200)
+        question_source = item.get("q")
+        if not isinstance(question_source, Mapping):
+            question_source = item.get("question")
+        question_id = _safe_text(item.get("questionId") or item.get("question_id"), 200)
+        if not question_id and isinstance(question_source, Mapping):
+            question_id = _safe_text(
+                question_source.get("questionId") or question_source.get("id") or question_source.get("key"),
+                200,
+            )
+        assignment_data: Mapping[str, Any] | None = None
+        if source_type == "assignment":
+            if not assignment_id or not question_id:
+                return _error("assignment id and question id are required", 400, "invalid_assignment_source")
+            owner = store.get_user(owner_id)
+            # An assignment is addressed to a student recipient.  Teachers
+            # may write a student's book only for non-assignment/admin flows;
+            # they cannot claim an assignment question for themselves.
+            if not owner or owner.get("role") != "student":
+                return _error("assignment owner must be a student recipient", 403, "forbidden_assignment")
+            assignment_data = store.get_assignment(assignment_id, student_id=owner_id)
+            if assignment_data is None:
+                return _error("assignment is not visible to this student", 403, "forbidden_assignment")
+            snapshot = _assignment_question_snapshot(assignment_data, question_id)
+            if snapshot is None:
+                return _error("question is not part of this assignment", 404, "question_not_found")
+            # Active insertion is only allowed after the server has recorded
+            # this student's first check for the question.  The stored answer
+            # is authoritative, so a client cannot replace it with a forged
+            # value while adding a wrong-book item.
+            checked = store.get_assignment_question_check(assignment_id, owner_id, question_id)
+            if checked is None:
+                return _error("question must be checked before adding it", 409, "question_not_checked")
+            checked_result = checked.get("result") if isinstance(checked.get("result"), Mapping) else {}
+            if bool(checked_result.get("correct")):
+                return _error("a correct question cannot be added to the wrong book", 409, "question_not_wrong")
+            # Replace any client-provided q/options/answers with the trusted
+            # assignment snapshot and first-check answer.
+            item["q"] = snapshot.get("q")
+            item["questionId"] = question_id
+            item["assignmentId"] = assignment_id
+            item["sourceType"] = "assignment"
+            item["userAnswer"] = sanitize_json(checked.get("answer"))
+            item.setdefault("article", snapshot.get("article", ""))
+            item.setdefault("articleIndex", snapshot.get("articleIndex"))
+            item.setdefault("sectionIndex", snapshot.get("sectionIndex"))
+            item.setdefault("sectionTitle", snapshot.get("sectionTitle", ""))
+            item.setdefault("sectionId", snapshot.get("sectionId", ""))
+            item.setdefault("section", snapshot.get("section"))
+            item.setdefault("assignmentTitle", assignment_data.get("title") or assignment_data.get("name", ""))
+        elif assignment_id:
+            # A non-assignment item carrying an assignment id would otherwise
+            # create an ambiguous identity; require the explicit source tag.
+            return _error("source type is invalid for assignment item", 400, "invalid_assignment_source")
+        try:
+            saved = store.upsert_wbook_item(owner_id, item)
+        except (TypeError, ValueError):
+            return _error("wrong-book item is invalid", 400, "invalid_wrongbook_item")
+        return jsonify(
+            {
+                "ok": True,
+                "created": bool(saved.get("created")),
+                "owner_id": owner_id,
+                "section": "wbook",
+                "item": saved.get("item"),
+                "data": saved.get("data", []),
+                "state": _state_snapshot(store, user, current_app),
+            }
+        )
+
     # ------------------------------------------------------------------
     # Teacher/student assignments
     # ------------------------------------------------------------------
@@ -3321,7 +3721,7 @@ def _create_blueprint(store: ReadingTrainerStore):
         if saved is None:
             return _assignment_not_found_or_forbidden(assignment_id, user)
         if not idempotent:
-            store.record_assignment_outcomes(str(user["id"]), assignment_id, result)
+            store.record_assignment_outcomes(str(user["id"]), assignment_id, result, assignment=assignment)
         visible = _assignment_view(store, saved, user, detail=True)
         persisted_result = visible.get("result") or result
         return jsonify(
@@ -3331,6 +3731,7 @@ def _create_blueprint(store: ReadingTrainerStore):
                 "result": persisted_result,
                 "assignment": visible,
                 "data": visible,
+                "state": _state_snapshot(store, user, current_app),
                 **visible,
             }
         )

@@ -214,6 +214,72 @@ process.stdout.write(JSON.stringify(result));
     }
 
 
+def test_assignment_wrong_book_uses_server_confirmed_idempotent_item_api():
+    source = FRONTEND.read_text(encoding="utf-8")
+    add_source = _function_source(source, "addAssignmentWrongToBook", "renderAssignmentQuestionFeedback")
+    feedback_source = _function_source(source, "renderAssignmentQuestionFeedback", "checkAssignmentQuestion")
+    submit_source = _function_source(source, "submitAssignmentAnswers", "assignmentArticleEntries")
+    assert "apiV2('/wbook/items'" in add_source
+    assert "sourceType: 'assignment'" in add_source
+    assert "res.ok !== true" in add_source
+    assert "服务器未确认错题保存" in add_source
+    assert "applyServerState(res.state)" in add_source
+    assert "itr-assignment-wrong-add" in feedback_source
+    assert "addAssignmentWrongToBook" in feedback_source
+    assert "applyServerState(res.state)" in submit_source
+
+
+def test_student_personal_diagnosis_uses_shared_grade_dimensions():
+    source = FRONTEND.read_text(encoding="utf-8")
+    diagnosis_source = _function_source(source, "renderStudentDiagnosis", "renderStats")
+    render_source = _function_source(source, "renderStats", "exportScorePDF")
+    grade_source = _function_source(source, "gradeAll", "assignmentResponseResult")
+    assert "学生个人诊断" in diagnosis_source
+    assert "近 10 次" in diagnosis_source
+    assert "能力与题型" in diagnosis_source
+    assert "练习记录" in diagnosis_source
+    assert "currentUser.role === 'student'" in render_source
+    assert "renderStudentDiagnosis(panel)" in render_source
+    assert "DIAGNOSIS_ABILITIES" in source
+    assert "证据定位" in source
+    assert "source: 'practice'" in grade_source
+    assert "byType: cloneData(byType" in grade_source
+    assert "byExam: cloneData(examDetail" in grade_source
+
+
+def test_student_personal_diagnosis_aggregates_assignment_and_practice_records():
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required to execute the embedded diagnosis helpers")
+    source = FRONTEND.read_text(encoding="utf-8")
+    start = source.index('var studentDiagnosisState =')
+    end = source.index('function renderStudentDiagnosis(', start)
+    helpers = source[start:end]
+    harness = f"""
+function normType(value) {{ return value; }}
+function escapeHtml(value) {{ return String(value == null ? '' : value); }}
+function typeLabel(value) {{ return value; }}
+var TYPE_ADVICE = {{}};
+{helpers}
+const records = [
+  {{ts:1, source:'practice', total:6, right:4, unanswered:1, byType:{{'fill-blank':{{total:3,right:2}},headings:{{total:3,right:2}}}}, byExam:{{IELTS:{{total:6,right:4}}}}}},
+  {{ts:2, source:'assignment', assignmentId:'a1', total:4, right:3, unanswered:0, byType:{{headings:{{total:2,right:2}},vocabulary:{{total:2,right:1}}}}, byExam:{{TOEFL:{{total:4,right:3}}}}}}
+];
+studentDiagnosisState.period = 'all';
+const totals = diagnosisTotals(diagnosisFilteredRecords(records));
+const types = diagnosisAggregateTypes(diagnosisFilteredRecords(records));
+const abilities = diagnosisAbilityData(types);
+studentDiagnosisState.source = 'assignment';
+const assignmentOnly = diagnosisFilteredRecords(records);
+process.stdout.write(JSON.stringify({{totals,types,abilities,assignmentOnly:assignmentOnly.length}}));
+"""
+    result = subprocess.run(["node", "-e", harness], cwd=ROOT, capture_output=True, text=True, check=True)
+    data = json.loads(result.stdout)
+    assert data["totals"] == {"total": 10, "right": 7, "unanswered": 1, "pct": 70}
+    assert data["types"]["headings"] == {"right": 4, "total": 5, "unanswered": 0, "pct": 80}
+    assert next(item for item in data["abilities"] if item["name"] == "主旨与结构")["pct"] == 80
+    assert data["assignmentOnly"] == 1
+
+
 def test_pdf_export_has_watermark_controls_and_no_heading_answer_leak():
     source = FRONTEND.read_text(encoding="utf-8")
     worksheet_source = _function_source(source, "worksheetQuestion", "worksheetAnswerSheet")
