@@ -87,3 +87,56 @@ process.stdout.write(JSON.stringify(buildGenerationBatches(6, types, allocation)
     assert "batches.reduce" in api_generate
     assert "apiGenerateBatch" in api_generate
     assert "q.id = i + 1" in api_generate
+
+
+def test_heading_option_objects_are_rendered_as_text_not_object_object():
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required to execute the embedded frontend helpers")
+    source = FRONTEND.read_text(encoding="utf-8")
+    start = source.index("function headingOptionText(")
+    end = source.index("function badge(", start)
+    helpers = source[start:end]
+    harness = f"""
+{helpers}
+const values = [
+  headingOptionText('i. Moon exploration'),
+  headingOptionText({{label: 'ii', text: 'The problem of no air'}}),
+  headingOptionText({{id: 'iii', heading: 'Radiation danger'}}),
+  headingOptionValue({{value: 'iv', text: 'Extreme temperatures'}})
+];
+process.stdout.write(JSON.stringify(values));
+"""
+    result = subprocess.run(
+        ["node", "-e", harness],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == [
+        "i. Moon exploration",
+        "The problem of no air",
+        "Radiation danger",
+        "iv",
+    ]
+    headings_source = _function_source(source, "renderQuestion", "checkQuestion")
+    assert "headingOptionValue(h)" in headings_source
+    assert "headingOptionText(h)" in headings_source
+
+
+def test_assignment_flow_exposes_per_question_check_and_full_report():
+    source = FRONTEND.read_text(encoding="utf-8")
+    render_source = _function_source(source, "renderQuestion", "checkQuestion")
+    result_source = _function_source(source, "renderAssignmentResult", "collectAssignmentAnswer")
+    report_source = _function_source(source, "buildPracticeReportMarkup", "gradeAll")
+    grade_source = _function_source(source, "gradeAll", "assignmentResponseResult")
+    assert "itr-assignment-check" in render_source
+    assert "itr-assignment-showans" in render_source
+    assert "itr-assignment-explain" in render_source
+    assert "sharedByType" in result_source
+    assert "sharedByExam" in result_source
+    assert "buildPracticeReportMarkup" in result_source
+    assert "错题与解析" in report_source
+    assert "能力分析与学习建议" in report_source
+    assert "分项统计" in report_source
+    assert "buildPracticeReportMarkup" in grade_source

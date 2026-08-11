@@ -24,6 +24,7 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -79,6 +80,11 @@ FEISHU_TABLES = {
     "library": "tblFfhGzCg9EL1n5",
     "invites": "tblsCIOlB3QCp1D9",
     "settings": "tbl062TIlW8iEPXB",
+    # Assignments were added after the original Feishu schema.  Deployments
+    # can opt in by setting FEISHU_TABLE_ASSIGNMENTS (or the equivalent app
+    # config); keeping the key here makes the sync planner extensible without
+    # inventing a table ID or changing the primary SQLite data source.
+    "assignments": "",
 }
 _FEISHU_TOKEN_LOCK = threading.Lock()
 
@@ -325,6 +331,50 @@ class ReadingTrainerStore:
                     data_json TEXT NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS assignments (
+                    id TEXT PRIMARY KEY,
+                    teacher_id TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    instructions TEXT NOT NULL DEFAULT '',
+                    questions_json TEXT NOT NULL DEFAULT '[]',
+                    sections_json TEXT NOT NULL DEFAULT '[]',
+                    settings_json TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    due_at INTEGER,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_assignments_teacher
+                    ON assignments(teacher_id, updated_at);
+                CREATE TABLE IF NOT EXISTS assignment_recipients (
+                    assignment_id TEXT NOT NULL,
+                    student_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'unread',
+                    unread INTEGER NOT NULL DEFAULT 1,
+                    opened_at INTEGER,
+                    submitted_at INTEGER,
+                    answers_json TEXT,
+                    result_json TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (assignment_id, student_id),
+                    FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_assignment_recipients_student
+                    ON assignment_recipients(student_id, updated_at);
+                CREATE TABLE IF NOT EXISTS assignment_question_checks (
+                    assignment_id TEXT NOT NULL,
+                    student_id TEXT NOT NULL,
+                    question_id TEXT NOT NULL,
+                    answer_json TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    checked_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (assignment_id, student_id, question_id),
+                    FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_assignment_question_checks_student
+                    ON assignment_question_checks(student_id, updated_at);
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -336,6 +386,13 @@ class ReadingTrainerStore:
                 );
                 """
             )
+            # The table was introduced after the first production schema.  A
+            # guarded additive migration keeps an existing database usable.
+            try:
+                connection.execute("ALTER TABLE assignments ADD COLUMN due_at INTEGER")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
         imported = False
         with self.connect() as connection:
             marker = connection.execute(
@@ -776,8 +833,11 @@ class ReadingTrainerStore:
             return False
         if owner.get("role") != "student":
             return False
-        if owner.get("created_by") == teacher_id:
-            return True
+        # A class assignment is the current source of truth.  A student can
+        # retain the historical ``created_by`` field after being moved to a
+        # different class; that old teacher must not continue to read or write
+        # the student's business data.  Only use created_by for students that
+        # have not been assigned to a class yet.
         class_id = owner.get("class_id")
         if class_id:
             for item in self.list_classes():
@@ -785,7 +845,508 @@ class ReadingTrainerStore:
                     item.get("teacherId") or item.get("teacher_id") or ""
                 ) == str(teacher_id):
                     return True
-        return False
+            return False
+        return owner.get("created_by") == teacher_id
+
+    # ------------------------------------------------------------------
+    # Assignment persistence
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _decode_json(raw: Any, default: Any) -> Any:
+        try:
+            value = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            return default
+        return value
+
+    @staticmethod
+    def _due_timestamp(value: Any) -> int | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, (int, float)):
+            numeric = int(value)
+            return numeric // 1000 if numeric > 10_000_000_000 else numeric
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return int(parsed.timestamp())
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @classmethod
+    def _assignment_row(cls, row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
+        """Decode one assignment row into the stable API shape.
+
+        The snake_case aliases are intentionally retained for server-side
+        callers while camelCase fields match the browser API contract.
+        """
+
+        def value(name: str, default: Any = None) -> Any:
+            try:
+                return row[name]  # type: ignore[index]
+            except (KeyError, IndexError, TypeError):
+                return default
+
+        assignment_id = str(value("id") or "")
+        teacher_id = str(value("teacher_id") or "")
+        created_at = int(value("created_at") or 0)
+        updated_at = int(value("updated_at") or created_at or 0)
+        questions = cls._decode_json(value("questions_json"), [])
+        sections = cls._decode_json(value("sections_json"), [])
+        settings = cls._decode_json(value("settings_json"), {})
+        due_at = value("due_at")
+        due_ms = int(due_at or 0) * 1000 if due_at else None
+        return {
+            "id": assignment_id,
+            "assignmentId": assignment_id,
+            "teacherId": teacher_id,
+            "teacher_id": teacher_id,
+            "title": str(value("title") or ""),
+            "instructions": str(value("instructions") or ""),
+            "questions": sanitize_json(questions if isinstance(questions, list) else []),
+            "sections": sanitize_json(sections if isinstance(sections, list) else []),
+            "settings": sanitize_json(settings if isinstance(settings, Mapping) else {}),
+            "generationSettings": sanitize_json(settings if isinstance(settings, Mapping) else {}),
+            "status": str(value("status") or "draft"),
+            "dueAt": due_ms,
+            "deadline": due_ms,
+            "createdAt": created_at * 1000,
+            "updatedAt": updated_at * 1000,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "studentIds": [],
+            "recipients": [],
+        }
+
+    @classmethod
+    def _recipient_row(cls, row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
+        def value(name: str, default: Any = None) -> Any:
+            try:
+                return row[name]  # type: ignore[index]
+            except (KeyError, IndexError, TypeError):
+                return default
+
+        assignment_id = str(value("assignment_id") or "")
+        student_id = str(value("student_id") or "")
+        status = str(value("status") or "unread")
+        unread = bool(int(value("unread") or 0))
+        answers = cls._decode_json(value("answers_json"), None)
+        result = cls._decode_json(value("result_json"), None)
+        created_at = int(value("created_at") or 0)
+        updated_at = int(value("updated_at") or created_at or 0)
+        opened_at = value("opened_at")
+        submitted_at = value("submitted_at")
+        item: dict[str, Any] = {
+            "assignmentId": assignment_id,
+            "studentId": student_id,
+            "status": status,
+            "unread": unread,
+            "read": not unread,
+            "openedAt": int(opened_at or 0) * 1000 if opened_at else None,
+            "submittedAt": int(submitted_at or 0) * 1000 if submitted_at else None,
+            "createdAt": created_at * 1000,
+            "updatedAt": updated_at * 1000,
+            "result": sanitize_json(result) if isinstance(result, (Mapping, list)) else result,
+        }
+        if answers is not None:
+            item["answers"] = sanitize_json(answers)
+        return item
+
+    def _assignment_recipients(self, assignment_id: str, student_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM assignment_recipients WHERE assignment_id = ?"
+        params: list[Any] = [assignment_id]
+        if student_id is not None:
+            query += " AND student_id = ?"
+            params.append(student_id)
+        query += " ORDER BY student_id"
+        with self.connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [self._recipient_row(row) for row in rows]
+
+    def create_assignment(
+        self,
+        teacher_id: str,
+        payload: Mapping[str, Any],
+        student_ids: Iterable[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create or idempotently update an assignment and its recipients.
+
+        ``id`` is accepted from trusted callers to make retries stable; when
+        omitted a server-generated ``asgn_`` identifier is used.  Existing
+        recipients are never deleted or reset, so a retry cannot erase a
+        student's submitted answers.
+        """
+
+        data = payload if isinstance(payload, Mapping) else {}
+        assignment_id = _safe_text(data.get("id") or data.get("assignmentId"), 200)
+        if not assignment_id:
+            assignment_id = "asgn_" + uuid.uuid4().hex
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", assignment_id):
+            raise ValueError("invalid assignment id")
+        title = _safe_text(data.get("title") or data.get("name"), 500)
+        instructions = _safe_text(data.get("instructions") or data.get("description"), 10000)
+        questions = data.get("questions") if isinstance(data.get("questions"), list) else []
+        sections = data.get("sections") if isinstance(data.get("sections"), list) else []
+        settings_raw = data.get("settings", data.get("generationSettings", {}))
+        settings = settings_raw if isinstance(settings_raw, Mapping) else {}
+        due_at = self._due_timestamp(data.get("dueAt", data.get("due_at", data.get("deadline"))))
+        recipient_values: list[str] = []
+        if student_ids is None:
+            student_ids = data.get("studentIds") or data.get("student_ids") or data.get("students") or []
+        if isinstance(student_ids, str):
+            student_ids = [student_ids]
+        for item in student_ids or []:
+            candidate = item.get("id") if isinstance(item, Mapping) else item
+            candidate = _safe_text(candidate, 200)
+            if candidate and candidate not in recipient_values:
+                recipient_values.append(candidate)
+        status = _safe_text(data.get("status"), 30).lower()
+        if status not in {"draft", "sent", "published", "archived"}:
+            status = "sent" if recipient_values else "draft"
+        now = _now()
+        encoded_questions = _json_dumps(sanitize_json(questions))
+        encoded_sections = _json_dumps(sanitize_json(sections))
+        encoded_settings = _json_dumps(sanitize_json(settings))
+        if sum(len(item.encode("utf-8")) for item in (encoded_questions, encoded_sections, encoded_settings)) > 8 * 1024 * 1024:
+            raise ValueError("assignment is too large")
+        with self.connect() as connection:
+            existing = connection.execute(
+                "SELECT teacher_id, created_at FROM assignments WHERE id = ?", (assignment_id,)
+            ).fetchone()
+            if existing and str(existing[0]) != str(teacher_id):
+                raise PermissionError("assignment belongs to another teacher")
+            created_at = int(existing[1]) if existing else now
+            connection.execute(
+                "INSERT INTO assignments(id, teacher_id, title, instructions, questions_json, sections_json, settings_json, status, due_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET title = excluded.title, instructions = excluded.instructions, "
+                "questions_json = excluded.questions_json, sections_json = excluded.sections_json, settings_json = excluded.settings_json, "
+                "status = excluded.status, due_at = excluded.due_at, updated_at = excluded.updated_at",
+                (
+                    assignment_id,
+                    str(teacher_id),
+                    title,
+                    instructions,
+                    encoded_questions,
+                    encoded_sections,
+                    encoded_settings,
+                    status,
+                    due_at,
+                    created_at,
+                    now,
+                ),
+            )
+            for student_id in recipient_values:
+                connection.execute(
+                    "INSERT OR IGNORE INTO assignment_recipients(assignment_id, student_id, status, unread, created_at, updated_at) "
+                    "VALUES (?, ?, 'unread', 1, ?, ?)",
+                    (assignment_id, student_id, now, now),
+                )
+        return self.get_assignment(assignment_id, teacher_id=str(teacher_id)) or {}
+
+    def get_assignment(
+        self,
+        assignment_id: str,
+        *,
+        teacher_id: str | None = None,
+        student_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        assignment_id = _safe_text(assignment_id, 200)
+        if not assignment_id:
+            return None
+        query = "SELECT * FROM assignments WHERE id = ?"
+        params: list[Any] = [assignment_id]
+        if teacher_id is not None:
+            query += " AND teacher_id = ?"
+            params.append(str(teacher_id))
+        with self.connect() as connection:
+            row = connection.execute(query, tuple(params)).fetchone()
+        if not row:
+            return None
+        result = self._assignment_row(row)
+        recipients = self._assignment_recipients(assignment_id, student_id)
+        if student_id is not None and not recipients:
+            # A student filter is an authorization boundary, not merely a
+            # projection.  Never return an assignment shell to a non-recipient.
+            return None
+        result["recipients"] = recipients
+        result["studentIds"] = [item["studentId"] for item in recipients]
+        return result
+
+    def list_assignments(
+        self,
+        *,
+        teacher_id: str | None = None,
+        student_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if teacher_id is None and student_id is None:
+            query = "SELECT * FROM assignments ORDER BY updated_at DESC, id DESC"
+            params: tuple[Any, ...] = ()
+        elif teacher_id is not None:
+            query = "SELECT * FROM assignments WHERE teacher_id = ? ORDER BY updated_at DESC, id DESC"
+            params = (str(teacher_id),)
+        else:
+            query = (
+                "SELECT a.* FROM assignments a JOIN assignment_recipients r ON r.assignment_id = a.id "
+                "WHERE r.student_id = ? ORDER BY a.updated_at DESC, a.id DESC"
+            )
+            params = (str(student_id),)
+        with self.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        results = []
+        for row in rows:
+            item = self._assignment_row(row)
+            recipients = self._assignment_recipients(str(row["id"]), student_id)
+            item["recipients"] = recipients
+            item["studentIds"] = [recipient["studentId"] for recipient in recipients]
+            results.append(item)
+        return results
+
+    def mark_assignment_open(self, assignment_id: str, student_id: str) -> dict[str, Any] | None:
+        assignment_id = _safe_text(assignment_id, 200)
+        student_id = _safe_text(student_id, 200)
+        if not assignment_id or not student_id:
+            return None
+        now = _now()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT status, opened_at FROM assignment_recipients WHERE assignment_id = ? AND student_id = ?",
+                (assignment_id, student_id),
+            ).fetchone()
+            if not row:
+                return None
+            if str(row[0]) != "submitted":
+                connection.execute(
+                    "UPDATE assignment_recipients SET status = 'read', unread = 0, opened_at = COALESCE(opened_at, ?), updated_at = ? "
+                    "WHERE assignment_id = ? AND student_id = ?",
+                    (now, now, assignment_id, student_id),
+                )
+        return self.get_assignment(assignment_id, student_id=student_id)
+
+    @classmethod
+    def _question_check_row(cls, row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
+        """Decode one first-attempt question check without exposing storage details."""
+
+        def value(name: str, default: Any = None) -> Any:
+            try:
+                return row[name]  # type: ignore[index]
+            except (KeyError, IndexError, TypeError):
+                return default
+
+        answer = cls._decode_json(value("answer_json"), None)
+        result = cls._decode_json(value("result_json"), {})
+        return {
+            "assignmentId": str(value("assignment_id") or ""),
+            "studentId": str(value("student_id") or ""),
+            "questionId": str(value("question_id") or ""),
+            "answer": sanitize_json(answer),
+            "result": sanitize_json(result) if isinstance(result, Mapping) else {},
+            "checkedAt": int(value("checked_at") or 0) * 1000 if value("checked_at") else None,
+            "updatedAt": int(value("updated_at") or 0) * 1000 if value("updated_at") else None,
+        }
+
+    def get_assignment_question_check(
+        self, assignment_id: str, student_id: str, question_id: str
+    ) -> dict[str, Any] | None:
+        assignment_id = _safe_text(assignment_id, 200)
+        student_id = _safe_text(student_id, 200)
+        question_id = _safe_text(question_id, 200)
+        if not assignment_id or not student_id or not question_id:
+            return None
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM assignment_question_checks "
+                "WHERE assignment_id = ? AND student_id = ? AND question_id = ?",
+                (assignment_id, student_id, question_id),
+            ).fetchone()
+        return self._question_check_row(row) if row else None
+
+    def list_assignment_question_checks(
+        self, assignment_id: str, student_id: str
+    ) -> dict[str, dict[str, Any]]:
+        assignment_id = _safe_text(assignment_id, 200)
+        student_id = _safe_text(student_id, 200)
+        if not assignment_id or not student_id:
+            return {}
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM assignment_question_checks "
+                "WHERE assignment_id = ? AND student_id = ? ORDER BY question_id",
+                (assignment_id, student_id),
+            ).fetchall()
+        result: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            item = self._question_check_row(row)
+            result[str(item["questionId"])] = item
+        return result
+
+    def save_assignment_question_check(
+        self,
+        assignment_id: str,
+        student_id: str,
+        question_id: str,
+        answer: Any,
+        result: Mapping[str, Any],
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Save a student's first score for a question.
+
+        ``INSERT OR IGNORE`` makes this operation safe under concurrent browser
+        retries.  A later request always receives the original answer/result;
+        it can never replace the first scored attempt.
+        """
+
+        assignment_id = _safe_text(assignment_id, 200)
+        student_id = _safe_text(student_id, 200)
+        question_id = _safe_text(question_id, 200)
+        if not assignment_id or not student_id or not question_id:
+            return None, False
+        now = _now()
+        encoded_answer = _json_dumps(sanitize_json(answer))
+        encoded_result = _json_dumps(sanitize_json(dict(result)))
+        with self.connect() as connection:
+            before = connection.execute(
+                "SELECT 1 FROM assignment_question_checks "
+                "WHERE assignment_id = ? AND student_id = ? AND question_id = ?",
+                (assignment_id, student_id, question_id),
+            ).fetchone()
+            connection.execute(
+                "INSERT OR IGNORE INTO assignment_question_checks "
+                "(assignment_id, student_id, question_id, answer_json, result_json, checked_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (assignment_id, student_id, question_id, encoded_answer, encoded_result, now, now),
+            )
+            row = connection.execute(
+                "SELECT * FROM assignment_question_checks "
+                "WHERE assignment_id = ? AND student_id = ? AND question_id = ?",
+                (assignment_id, student_id, question_id),
+            ).fetchone()
+        return (self._question_check_row(row) if row else None), bool(before)
+
+    def record_assignment_outcomes(
+        self, student_id: str, assignment_id: str, result: Mapping[str, Any]
+    ) -> dict[str, int]:
+        """Write a first submission to the student's existing grade/wrong books.
+
+        The assignment recipient row is the idempotency source of truth.  This
+        helper additionally de-duplicates by assignment/question id so a
+        recovery retry cannot append duplicate local records.
+        """
+
+        student_id = _safe_text(student_id, 200)
+        assignment_id = _safe_text(assignment_id, 200)
+        if not student_id or not assignment_id:
+            return {"grades": 0, "wrong": 0}
+        clean_result = sanitize_json(dict(result))
+        grades = self.get_document(student_id, "grades", [])
+        grades = list(grades) if isinstance(grades, list) else []
+        grade_exists = any(
+            isinstance(item, Mapping)
+            and str(item.get("assignmentId") or item.get("assignment_id") or "") == assignment_id
+            for item in grades
+        )
+        grade_written = 0
+        if not grade_exists:
+            grades.append(
+                {
+                    "id": f"assignment:{assignment_id}",
+                    "assignmentId": assignment_id,
+                    "ts": clean_result.get("submittedAt") or _now() * 1000,
+                    "pct": clean_result.get("pct", 0),
+                    "right": clean_result.get("right", clean_result.get("correct", 0)),
+                    "total": clean_result.get("total", 0),
+                    "wrongCount": clean_result.get("wrongCount", 0),
+                    "unanswered": clean_result.get("unanswered", 0),
+                    "byType": clean_result.get("byType", {}),
+                    "byExam": clean_result.get("byExam", {}),
+                }
+            )
+            self.put_document(student_id, "grades", grades)
+            grade_written = 1
+
+        wrong_items = clean_result.get("wrong", []) if isinstance(clean_result, Mapping) else []
+        wrong_book = self.get_document(student_id, "wbook", [])
+        wrong_book = list(wrong_book) if isinstance(wrong_book, list) else []
+        wrong_written = 0
+        if isinstance(wrong_items, list):
+            existing_keys = {
+                (str(item.get("assignmentId") or item.get("assignment_id") or ""),
+                 str(item.get("questionId") or item.get("id") or ""))
+                for item in wrong_book
+                if isinstance(item, Mapping)
+            }
+            for item in wrong_items:
+                if not isinstance(item, Mapping):
+                    continue
+                question_id = str(item.get("questionId") or item.get("id") or "")
+                key = (assignment_id, question_id)
+                if not question_id or key in existing_keys:
+                    continue
+                wrong_book.insert(
+                    0,
+                    {
+                        "assignmentId": assignment_id,
+                        "questionId": question_id,
+                        "q": {
+                            "id": question_id,
+                            "type": item.get("type"),
+                            "exam": item.get("exam"),
+                            "prompt": item.get("prompt", ""),
+                            "answer": item.get("correctAnswer"),
+                            "explanation": item.get("explanation"),
+                        },
+                        "userAnswer": item.get("userAnswer"),
+                        "article": item.get("article", ""),
+                        "box": 1,
+                        "ts": clean_result.get("submittedAt") or _now() * 1000,
+                    },
+                )
+                existing_keys.add(key)
+                wrong_written += 1
+            if wrong_written:
+                self.put_document(student_id, "wbook", wrong_book[:150])
+        return {"grades": grade_written, "wrong": wrong_written}
+
+    def submit_assignment(
+        self,
+        assignment_id: str,
+        student_id: str,
+        answers: Any,
+        result: Mapping[str, Any],
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Persist a submission and return ``(assignment, idempotent)``.
+
+        A previously submitted recipient is never overwritten, even when a
+        retried request carries a different answer payload.
+        """
+
+        assignment_id = _safe_text(assignment_id, 200)
+        student_id = _safe_text(student_id, 200)
+        if not assignment_id or not student_id:
+            return None, False
+        now = _now()
+        encoded_answers = _json_dumps(sanitize_json(answers))
+        encoded_result = _json_dumps(sanitize_json(dict(result)))
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM assignment_recipients WHERE assignment_id = ? AND student_id = ?",
+                (assignment_id, student_id),
+            ).fetchone()
+            if not row:
+                return None, False
+            if str(row[0]) == "submitted":
+                return self.get_assignment(assignment_id, student_id=student_id), True
+            connection.execute(
+                "UPDATE assignment_recipients SET status = 'submitted', unread = 0, opened_at = COALESCE(opened_at, ?), "
+                "submitted_at = ?, answers_json = ?, result_json = ?, updated_at = ? "
+                "WHERE assignment_id = ? AND student_id = ? AND status <> 'submitted'",
+                (now, now, encoded_answers, encoded_result, now, assignment_id, student_id),
+            )
+        return self.get_assignment(assignment_id, student_id=student_id), False
 
     def clear_expired_sessions(self) -> None:
         with self.connect() as connection:
@@ -1130,6 +1691,13 @@ def _stable_business_key(section: str, owner_id: str, value: Any, index: int = 0
             return f"classes:{value.get('id')}"
         if section == "invites" and value.get("code") not in (None, ""):
             return f"invites:{value.get('code')}"
+        if section == "assignments":
+            assignment_id = value.get("assignment_id") or value.get("assignmentId") or value.get("id")
+            student_id = value.get("student_id") or value.get("studentId")
+            if assignment_id not in (None, "") and student_id not in (None, ""):
+                return f"assignments:{assignment_id}:{student_id}"
+            if assignment_id not in (None, ""):
+                return f"assignments:{assignment_id}"
         for candidate in ("business_key", "businessKey", "id", "uid", "key", "code"):
             if value.get(candidate) not in (None, ""):
                 return f"{section}:{owner_id}:{_safe_text(value[candidate], 200)}"
@@ -1170,6 +1738,19 @@ def _feishu_fields(section: str, owner_id: str, value: Any, business_key: str) -
             "邀请码": data.get("code", ""),
             "类型": "教师" if role == "teacher" else "学生",
             "创建者": data.get("teacherId") or data.get("createdBy") or "",
+        }
+    elif section == "assignments":
+        assignment_id = data.get("assignment_id") or data.get("assignmentId") or data.get("id") or ""
+        student_id = data.get("student_id") or data.get("studentId") or ""
+        fields = {
+            "作业ID": assignment_id,
+            "学生ID": student_id,
+            "教师ID": data.get("teacher_id") or data.get("teacherId") or owner_id,
+            "标题": data.get("title") or "",
+            "状态": data.get("status") or "",
+            "未读": bool(data.get("unread")),
+            "提交时间": data.get("submittedAt") or data.get("submitted_at") or "",
+            "结果JSON": _json_dumps(data.get("result")) if data.get("result") is not None else "",
         }
     elif section == "settings":
         fields = {"键": owner_id, "值": _json_dumps(data)}
@@ -1243,6 +1824,45 @@ def _local_feishu_records(store: ReadingTrainerStore) -> dict[str, list[dict[str
             grouped.setdefault(section, []).append(
                 {"owner_id": document["owner_id"], "value": item, "index": index}
             )
+    # Assignments are a separate syncable entity.  One row per
+    # assignment/student recipient gives Feishu a stable key even when one
+    # teacher sends the same card to multiple students; submitted answers and
+    # result JSON remain server-derived data, never browser storage.
+    with store.connect() as connection:
+        rows = connection.execute(
+            "SELECT a.id, a.teacher_id, a.title, a.instructions, a.questions_json, a.sections_json, a.settings_json, a.status, "
+            "a.created_at, a.updated_at, r.student_id, r.status AS recipient_status, r.unread, r.opened_at, r.submitted_at, "
+            "r.answers_json, r.result_json FROM assignments a LEFT JOIN assignment_recipients r ON r.assignment_id = a.id "
+            "ORDER BY a.updated_at, a.id, r.student_id"
+        ).fetchall()
+    for row in rows:
+        try:
+            result_value = json.loads(row[16]) if row[16] else None
+            answers_value = json.loads(row[15]) if row[15] else None
+        except (TypeError, ValueError):
+            result_value = answers_value = None
+        value = {
+            "assignmentId": row[0],
+            "assignment_id": row[0],
+            "studentId": row[10] or "",
+            "student_id": row[10] or "",
+            "teacherId": row[1],
+            "teacher_id": row[1],
+            "title": row[2],
+            "instructions": row[3],
+            "questions": ReadingTrainerStore._decode_json(row[4], []),
+            "sections": ReadingTrainerStore._decode_json(row[5], []),
+            "settings": ReadingTrainerStore._decode_json(row[6], {}),
+            "status": row[11] or row[7],
+            "unread": bool(row[12]) if row[10] else False,
+            "openedAt": int(row[13] or 0) * 1000 if row[13] else None,
+            "submittedAt": int(row[14] or 0) * 1000 if row[14] else None,
+            "answers": answers_value,
+            "result": result_value,
+            "createdAt": int(row[8] or 0) * 1000,
+            "updatedAt": int(row[9] or 0) * 1000,
+        }
+        grouped["assignments"].append({"owner_id": row[1] or GLOBAL_OWNER_ID, "value": value})
     return grouped
 
 
@@ -1259,6 +1879,10 @@ def _remote_key(section: str, record: Mapping[str, Any]) -> str | None:
         return f"classes:{fields.get('班级ID')}"
     if section == "invites" and fields.get("邀请码"):
         return f"invites:{fields.get('邀请码')}"
+    if section == "assignments" and fields.get("作业ID"):
+        if fields.get("学生ID") not in (None, ""):
+            return f"assignments:{fields.get('作业ID')}:{fields.get('学生ID')}"
+        return f"assignments:{fields.get('作业ID')}"
     owner = fields.get("学员ID") or fields.get("owner_id") or fields.get("ownerId") or GLOBAL_OWNER_ID
     if section in ("vbook", "wbook") and fields.get("单词"):
         return f"{section}:{owner}:{str(fields.get('单词')).strip().lower()}"
@@ -1300,7 +1924,10 @@ def build_feishu_sync_plan(
     remote = remote_records or {}
     tables: dict[str, dict[str, Any]] = {}
     for section, local_items in local.items():
-        if section not in cfg["tables"]:
+        # Assignments have no baked-in Feishu table ID.  They become part of
+        # the plan as soon as a deployment configures one, while ordinary
+        # syncs continue to work unchanged when that table is absent.
+        if section not in cfg["tables"] or not cfg["tables"].get(section):
             continue
         local_by_key: dict[str, dict[str, Any]] = {}
         for item in local_items:
@@ -1375,6 +2002,499 @@ def _safe_user(user: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if user.get("created_at") is not None:
         result["createdAt"] = int(user.get("created_at") or 0) * 1000
     return result
+
+
+_ANSWER_KEY_NAMES = {
+    "answer",
+    "answers",
+    "answerkey",
+    "answerkeys",
+    "correctanswer",
+    "correctanswers",
+    "rightanswer",
+    "rightanswers",
+    "correctoption",
+    "correctoptions",
+    "correctchoice",
+    "correctchoices",
+    "correct",
+    "iscorrect",
+    "correctness",
+    "solution",
+    "solutions",
+    "explanation",
+    "explanations",
+}
+
+
+def _is_answer_key_name(name: Any) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", str(name).strip().lower())
+    return normalized in _ANSWER_KEY_NAMES or normalized.startswith("answerkey") or normalized.startswith("correctanswer")
+
+
+def _strip_answer_keys(value: Any) -> Any:
+    """Remove answer keys recursively from a student-visible question card."""
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): _strip_answer_keys(item)
+            for key, item in value.items()
+            if not _is_answer_key_name(key)
+        }
+    if isinstance(value, (list, tuple)):
+        return [_strip_answer_keys(item) for item in value]
+    return value
+
+
+def _assignment_question_list(assignment: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Flatten either ``sections[].questions`` or a top-level questions list."""
+
+    sections = assignment.get("sections")
+    flattened: list[dict[str, Any]] = []
+    if isinstance(sections, list):
+        for section_index, section in enumerate(sections):
+            if not isinstance(section, Mapping):
+                continue
+            questions = section.get("questions")
+            if not isinstance(questions, list):
+                continue
+            for question_index, question in enumerate(questions):
+                if isinstance(question, Mapping):
+                    item = dict(question)
+                    item.setdefault("_section_index", section_index)
+                    item.setdefault("_question_index", question_index)
+                    if section.get("exam") is not None:
+                        item.setdefault("_section_exam", section.get("exam"))
+                    flattened.append(item)
+    if flattened:
+        return flattened
+    questions = assignment.get("questions")
+    if isinstance(questions, list):
+        for index, question in enumerate(questions):
+            if isinstance(question, Mapping):
+                item = dict(question)
+                item.setdefault("_question_index", index)
+                flattened.append(item)
+    return flattened
+
+
+def _assignment_question_id(question: Mapping[str, Any], index: int) -> str:
+    value = question.get("id") or question.get("questionId") or question.get("key")
+    return _safe_text(value, 200) or str(index + 1)
+
+
+def _assignment_answer_key(question: Mapping[str, Any]) -> tuple[bool, Any]:
+    question_type = str(question.get("type") or question.get("questionType") or "").strip().lower()
+    # Historical title/matching cards often put a human-readable summary in
+    # ``answer`` (for example ``Paragraph 1 -> ii``) while the actual select
+    # values live on each item.  Prefer the per-row values whenever they are
+    # available so both that legacy shape and the newer answer-array shape
+    # grade identically.
+    if question_type in {"matching", "title-matching", "title_matching", "heading"} and isinstance(
+        question.get("items"), list
+    ):
+        item_answers: list[Any] = []
+        usable_items = True
+        option_keys = ("heading", "answer", "value", "selected", "choice", "label", "text")
+        for item in question.get("items", []):
+            if isinstance(item, Mapping):
+                if not any(key in item for key in option_keys):
+                    usable_items = False
+                    break
+                item_answers.append(_option_value(item, option_keys))
+            else:
+                item_answers.append(item)
+        if usable_items and item_answers and all(item not in (None, "") for item in item_answers):
+            return True, item_answers
+    for key in (
+        "answer",
+        "correctAnswer",
+        "correct_answer",
+        "answerKey",
+        "answer_key",
+        "solution",
+        "correct",
+        "rightAnswer",
+        "right_answer",
+    ):
+        if key in question:
+            return True, question.get(key)
+    # These two generated question shapes keep their answer per row rather
+    # than in a top-level ``answer`` field.  Mirror the existing browser
+    # grader so assignments produce the same result as ordinary practice.
+    if question_type == "matching" and isinstance(question.get("items"), list):
+        answers = [
+            _option_value(item, ("heading", "answer", "value", "selected", "choice", "label", "text"))
+            if isinstance(item, Mapping)
+            else item
+            for item in question.get("items", [])
+        ]
+        return True, answers
+    if question_type == "diagram" and isinstance(question.get("steps"), list):
+        answers = [
+            _option_value(item, ("answer", "value", "label", "text")) if isinstance(item, Mapping) else item
+            for item in question.get("steps", [])
+        ]
+        return True, answers
+    return False, None
+
+
+def _option_value(value: Mapping[str, Any], keys: Iterable[str]) -> Any:
+    """Read an option represented as either a primitive or an option object."""
+
+    for key in keys:
+        if key in value and value.get(key) is not None:
+            return value.get(key)
+    return value
+
+
+def _extract_answer_value(value: Any) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    # Answers posted by the browser may wrap a primitive in ``answer`` or
+    # ``value``.  An option object (e.g. {id: "H1", text: "Heading"}) has no
+    # wrapper key and must remain intact for object/string compatibility.
+    return _option_value(
+        value,
+        ("answer", "value", "selected", "choice", "response", "option"),
+    )
+
+
+def _assignment_answers_mapping(answers: Any) -> dict[str, Any]:
+    if isinstance(answers, Mapping):
+        result: dict[str, Any] = {}
+        for key, value in answers.items():
+            result[str(key)] = _extract_answer_value(value)
+        return result
+    if not isinstance(answers, list):
+        return {}
+    mapped: dict[str, Any] = {}
+    for index, value in enumerate(answers):
+        if isinstance(value, Mapping):
+            key = value.get("id") or value.get("questionId") or value.get("question_id")
+            if key is not None:
+                mapped[str(key)] = _extract_answer_value(value)
+                continue
+        mapped[str(index + 1)] = value
+    return mapped
+
+
+def _normalize_answer(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return tuple(sorted((str(key).strip().lower(), _normalize_answer(item)) for key, item in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_normalize_answer(item) for item in value)
+    if value is None:
+        return ""
+    text = str(value).strip().casefold()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _option_candidates(value: Any) -> list[Any]:
+    """Return primitive aliases for string and object option shapes."""
+
+    if not isinstance(value, Mapping):
+        return [value]
+    candidates: list[Any] = []
+    for key in (
+        "answer",
+        "value",
+        "selected",
+        "choice",
+        "response",
+        "option",
+        "id",
+        "key",
+        "label",
+        "heading",
+        "text",
+        "title",
+        "name",
+    ):
+        if key in value and value.get(key) not in (None, ""):
+            candidate = value.get(key)
+            if not isinstance(candidate, (Mapping, list, tuple)):
+                candidates.append(candidate)
+    if not candidates:
+        candidates.append(value)
+    return candidates
+
+
+def _answers_equal(left: Any, right: Any) -> bool:
+    """Compare answers while accepting primitive and option-object variants."""
+
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        left_keys = {str(key) for key in left}
+        right_keys = {str(key) for key in right}
+        # A sentence-end answer is a mapping of row id -> option.  Compare
+        # those rows structurally before trying option aliases.
+        if left_keys == right_keys and not left_keys.intersection(
+            {"id", "value", "label", "text", "heading", "title", "name"}
+        ):
+            return all(_answers_equal(left.get(key), right.get(key)) for key in left)
+    if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
+        if not isinstance(left, (list, tuple)) or not isinstance(right, (list, tuple)):
+            return False
+        return len(left) == len(right) and all(_answers_equal(a, b) for a, b in zip(left, right))
+    left_values = _option_candidates(left)
+    right_values = _option_candidates(right)
+    return any(_normalize_answer(a) == _normalize_answer(b) for a in left_values for b in right_values)
+
+
+def _is_answered(value: Any) -> bool:
+    if value is None or value == "":
+        return False
+    if isinstance(value, (list, tuple)):
+        return bool(value) and any(_is_answered(item) for item in value)
+    if isinstance(value, Mapping):
+        return bool(value) and any(_is_answered(item) for item in value.values())
+    return True
+
+
+def _question_type(question: Mapping[str, Any]) -> str:
+    return _safe_text(question.get("type") or question.get("questionType") or "unknown", 100) or "unknown"
+
+
+def _question_exam(question: Mapping[str, Any], assignment: Mapping[str, Any] | None = None) -> str:
+    value = (
+        question.get("exam")
+        or question.get("examType")
+        or question.get("sourceExam")
+        or question.get("_section_exam")
+    )
+    if value is None and assignment:
+        value = assignment.get("exam") or assignment.get("examType")
+        if value is None and isinstance(assignment.get("settings"), Mapping):
+            settings = assignment.get("settings")
+            value = settings.get("exam") or settings.get("examType")
+    text = _safe_text(value, 100)
+    if not text:
+        return "—"
+    lowered = text.casefold()
+    if "ielts" in lowered:
+        return "IELTS"
+    if "toefl" in lowered:
+        return "TOEFL"
+    return text
+
+
+_TYPE_ADVICE = {
+    "multiple-choice": "先定位题干关键词回原文，再逐项排除偷换概念和过度推断。",
+    "vocabulary": "结合上下文猜词义，并积累学术高频词与近义词辨析。",
+    "true-false-notgiven": "区分原文明确支持、明确矛盾和未提及，避免用常识脑补。",
+    "fill-blank": "检查同义替换、词性、单复数、时态与拼写。",
+    "matching": "先抓段落主旨句，再将概括性标题与段落配对。",
+    "headings": "先通读段落找主旨，警惕只对应细节的干扰标题。",
+    "diagram": "理清流程或因果，回原文核对词性和单复数。",
+    "sentence-end": "关注因果、转折和代词指代，确认句尾与前半的逻辑衔接。",
+}
+
+
+def _grade_assignment_question(
+    assignment: Mapping[str, Any], question: Mapping[str, Any], index: int, submitted: Any
+) -> dict[str, Any]:
+    question_id = _assignment_question_id(question, index)
+    has_key, correct_answer = _assignment_answer_key(question)
+    answered = _is_answered(submitted)
+    is_correct = bool(has_key and answered and _answers_equal(submitted, correct_answer))
+    question_type = _question_type(question)
+    exam = _question_exam(question, assignment)
+    return {
+        "id": question_id,
+        "questionId": question_id,
+        "type": question_type,
+        "exam": exam,
+        "prompt": question.get("prompt") or question.get("question") or "",
+        "correct": is_correct,
+        "answered": answered,
+        "userAnswer": sanitize_json(submitted),
+        "correctAnswer": sanitize_json(correct_answer) if has_key else None,
+        "explanation": question.get("explanation") if has_key else None,
+    }
+
+
+def _grade_assignment(
+    assignment: Mapping[str, Any],
+    answers: Any,
+    first_checks: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    answer_map = _assignment_answers_mapping(answers)
+    questions = _assignment_question_list(assignment)
+    records: list[dict[str, Any]] = []
+    wrong: list[dict[str, Any]] = []
+    unanswered_questions: list[dict[str, Any]] = []
+    right = 0
+    unanswered = 0
+    for index, question in enumerate(questions):
+        question_id = _assignment_question_id(question, index)
+        submitted = answer_map.get(question_id)
+        if submitted is None and str(index + 1) in answer_map:
+            submitted = answer_map.get(str(index + 1))
+        if first_checks and question_id in first_checks:
+            saved = first_checks.get(question_id)
+            if isinstance(saved, Mapping) and "answer" in saved:
+                submitted = saved.get("answer")
+        record = _grade_assignment_question(assignment, question, index, submitted)
+        if not record["answered"]:
+            unanswered += 1
+            unanswered_questions.append(record)
+        if record["correct"]:
+            right += 1
+        records.append(record)
+        if not record["correct"]:
+            wrong.append(sanitize_json(record))
+    total = len(questions)
+    pct = round((right / total) * 100, 2) if total else 0
+    by_type: dict[str, dict[str, Any]] = {}
+    by_exam: dict[str, dict[str, Any]] = {}
+    for record in records:
+        for grouping, key in ((by_type, str(record.get("type") or "unknown")), (by_exam, str(record.get("exam") or "—"))):
+            bucket = grouping.setdefault(
+                key,
+                {"right": 0, "correct": 0, "total": 0, "wrong": 0, "unanswered": 0, "pct": 0},
+            )
+            bucket["total"] += 1
+            if record["correct"]:
+                bucket["right"] += 1
+                bucket["correct"] += 1
+            elif not record["answered"]:
+                bucket["unanswered"] += 1
+            else:
+                bucket["wrong"] += 1
+    for grouping in (by_type, by_exam):
+        for bucket in grouping.values():
+            bucket["pct"] = round(bucket["right"] / bucket["total"] * 100, 2) if bucket["total"] else 0
+    weak = sorted(
+        ((key, value) for key, value in by_type.items() if value.get("pct", 0) < 100),
+        key=lambda item: item[1].get("pct", 0),
+    )
+    advice: list[str] = []
+    if pct >= 90:
+        advice.append("整体表现优秀，可尝试提高难度或缩短做题时间以贴近考试节奏。")
+    elif pct >= 60:
+        advice.append("整体达标，建议优先巩固下方正确率较低的题型。")
+    else:
+        advice.append("基础仍需加强，建议先稳固基础并进行薄弱题型专项训练。")
+    for type_name, bucket in weak[:3]:
+        advice.append(
+            f"{type_name} 正确率 {bucket.get('pct', 0)}%：{_TYPE_ADVICE.get(type_name, '回顾原文定位与同义替换。')}"
+        )
+    if unanswered:
+        advice.append(f"有 {unanswered} 题未作答，考试中应先填写答案以避免白丢分。")
+    answered_wrong = sum(1 for record in records if not record["correct"] and record["answered"])
+    return {
+        "score": pct,
+        "pct": pct,
+        "percentage": pct,
+        "correct": right,
+        "correctCount": right,
+        "right": right,
+        "total": total,
+        "totalCount": total,
+        "unanswered": unanswered,
+        "unansweredCount": unanswered,
+        "wrongCount": answered_wrong,
+        "answeredWrongCount": answered_wrong,
+        "wrong": wrong,
+        "wrongAnswers": wrong,
+        "unansweredQuestions": sanitize_json(unanswered_questions),
+        "records": records,
+        "byType": by_type,
+        "byExam": by_exam,
+        "advice": advice,
+        "adviceText": " ".join(advice),
+        "submittedAt": _now() * 1000,
+    }
+
+
+def _membership_for_user(store: ReadingTrainerStore, user: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not user or user.get("role") != "student":
+        return None
+    class_id = _safe_text(user.get("class_id") or user.get("classId"), 200)
+    default = {
+        "assigned": False,
+        "classId": None,
+        "className": "暂未分配",
+        "teacherId": None,
+        "teacherName": "暂未分配",
+    }
+    if not class_id:
+        # Students registered from a teacher invite may have a teacher
+        # relationship before an administrator places them in a class.
+        teacher_id = _safe_text(user.get("created_by") or user.get("createdBy"), 200) or None
+        teacher = store.get_user(teacher_id) if teacher_id else None
+        if teacher:
+            default["teacherId"] = teacher_id
+            default["teacherName"] = _safe_text(teacher.get("username"), 120) or "暂未分配"
+            default["assigned"] = True
+        return default
+    class_item = next((item for item in store.list_classes() if str(item.get("id")) == class_id), None)
+    if not class_item:
+        # Do not fall back to the historical created_by teacher when a class
+        # id exists.  The same rule is used by teacher_can_access().
+        default["classId"] = class_id
+        return default
+    teacher_id = _safe_text(
+        class_item.get("teacherId") or class_item.get("teacher_id") or class_item.get("created_by"), 200
+    ) or None
+    teacher = store.get_user(teacher_id) if teacher_id else None
+    class_name = _safe_text(class_item.get("name") or class_item.get("className") or class_item.get("title"), 300)
+    return {
+        "assigned": bool(class_name or teacher_id),
+        "classId": class_id,
+        "className": class_name or "暂未分配",
+        "teacherId": teacher_id,
+        "teacherName": _safe_text(teacher.get("username"), 120) if teacher else ("暂未分配" if not teacher_id else ""),
+    }
+
+
+def _assignment_view(
+    store: ReadingTrainerStore,
+    assignment: Mapping[str, Any],
+    principal: Mapping[str, Any],
+    *,
+    detail: bool = False,
+) -> dict[str, Any]:
+    """Build a role-scoped assignment response with answer-key redaction."""
+
+    role = principal.get("role")
+    result = dict(assignment)
+    recipients = [dict(item) for item in assignment.get("recipients", []) if isinstance(item, Mapping)]
+    if role == "student":
+        own_id = str(principal.get("id"))
+        own = next((item for item in recipients if str(item.get("studentId")) == own_id), None)
+        if own is None:
+            own = {"assignmentId": result.get("id"), "studentId": own_id, "status": "unread", "unread": True, "result": None}
+        result["recipients"] = [own]
+        result["studentIds"] = [own_id]
+        result["status"] = own.get("status", result.get("status"))
+        result["unread"] = bool(own.get("unread", False))
+        result["read"] = not result["unread"]
+        result["result"] = own.get("result")
+        if own.get("status") != "submitted":
+            result["questions"] = _strip_answer_keys(result.get("questions", []))
+            result["sections"] = _strip_answer_keys(result.get("sections", []))
+            # The recipient's submitted answers are absent until submission.
+            own.pop("answers", None)
+        elif not detail:
+            # Summary rows do not need to carry the potentially large card.
+            result["questions"] = []
+            result["sections"] = []
+        teacher = store.get_user(str(result.get("teacherId") or ""))
+        result["teacher"] = _safe_user(teacher)
+        if not detail:
+            result["questions"] = []
+            result["sections"] = []
+    else:
+        result["recipients"] = recipients
+        result["studentIds"] = [item.get("studentId") for item in recipients if item.get("studentId")]
+        if not detail:
+            result["questions"] = []
+            result["sections"] = []
+        for recipient in result["recipients"]:
+            recipient["student"] = _safe_user(store.get_user(str(recipient.get("studentId") or "")))
+    return sanitize_json(result)
 
 
 def _error(message: str, status: int, code: str = "request_error"):
@@ -1739,6 +2859,7 @@ def _state_snapshot(store: ReadingTrainerStore, principal: Mapping[str, Any] | N
         "accounts": accounts,
         "invites": sanitize_json(invites),
         "classes": sanitize_json(classes),
+        "membership": _membership_for_user(store, principal),
         "ai": _public_ai_config(store, app),
         "feishu": _public_feishu_config(store, app),
         "userData": user_data,
@@ -1754,12 +2875,17 @@ def _create_blueprint(store: ReadingTrainerStore):
     def bootstrap():
         user = _principal(store)
         state = _state_snapshot(store, user, current_app)
+        membership = _membership_for_user(store, user)
+        public_user = _safe_user(user)
+        if public_user is not None and membership is not None:
+            public_user["membership"] = membership
         return jsonify(
             {
                 "success": True,
                 "api_version": 2,
                 "authenticated": bool(user),
-                "user": _safe_user(user),
+                "user": public_user,
+                "membership": membership,
                 "roles": list(ROLES),
                 "sections": list(BUSINESS_SECTIONS),
                 "admin_configured": bool(store.list_users("admin")),
@@ -1881,6 +3007,224 @@ def _create_blueprint(store: ReadingTrainerStore):
                 session.pop(key, None)
         response = make_response(jsonify({"ok": True}), 200)
         return _clear_session_cookie(response)
+
+    # ------------------------------------------------------------------
+    # Teacher/student assignments
+    # ------------------------------------------------------------------
+
+    def _assignment_not_found_or_forbidden(assignment_id: str, user: Mapping[str, Any]):
+        existing = store.get_assignment(assignment_id)
+        if existing is not None:
+            return _error("insufficient permissions", 403, "forbidden")
+        return _error("assignment not found", 404, "assignment_not_found")
+
+    @bp.get("/assignments")
+    def assignment_list():
+        user, error = _auth_required(store, ("student", "teacher", "admin"))
+        if error:
+            return error
+        role = str(user.get("role"))
+        if role == "student":
+            records = store.list_assignments(student_id=str(user["id"]))
+        elif role == "teacher":
+            records = store.list_assignments(teacher_id=str(user["id"]))
+        else:
+            records = store.list_assignments()
+        summary = request.args.get("summary", "0").lower() in {"1", "true", "yes"}
+        # Summary is currently the default card shape as well; the explicit
+        # flag is accepted for the browser contract and future pagination.
+        visible = [_assignment_view(store, item, user, detail=False) for item in records]
+        return jsonify({"assignments": visible, "data": visible, "items": visible})
+
+    @bp.post("/assignments")
+    def assignment_create():
+        user, error = _auth_required(store, ("teacher", "admin"))
+        if error:
+            return error
+        payload = _json_body()
+        payload = payload if isinstance(payload, Mapping) else {}
+        raw_student_ids = payload.get("studentIds") or payload.get("student_ids") or payload.get("students") or []
+        if isinstance(raw_student_ids, str):
+            raw_student_ids = [raw_student_ids]
+        student_ids: list[str] = []
+        for item in raw_student_ids if isinstance(raw_student_ids, list) else []:
+            candidate = item.get("id") if isinstance(item, Mapping) else item
+            candidate = _safe_text(candidate, 200)
+            if candidate and candidate not in student_ids:
+                student_ids.append(candidate)
+        if str(user.get("role")) == "teacher":
+            for student_id in student_ids:
+                student = store.get_user(student_id)
+                if not student or student.get("role") != "student" or not store.teacher_can_access(str(user["id"]), student_id):
+                    return _error("teacher can only assign work to current students", 403, "forbidden_student")
+        else:
+            for student_id in student_ids:
+                student = store.get_user(student_id)
+                if not student or student.get("role") != "student":
+                    return _error("student does not exist", 400, "invalid_student")
+        try:
+            assignment = store.create_assignment(str(user["id"]), payload, student_ids)
+        except PermissionError:
+            return _error("assignment belongs to another teacher", 403, "forbidden")
+        except (TypeError, ValueError, sqlite3.IntegrityError):
+            return _error("assignment payload is invalid", 400, "invalid_assignment")
+        visible = _assignment_view(store, assignment, user, detail=True)
+        return jsonify({"ok": True, "assignment": visible, "data": visible, **visible}), 201
+
+    @bp.get("/assignments/<assignment_id>")
+    def assignment_detail(assignment_id: str):
+        user, error = _auth_required(store, ("student", "teacher", "admin"))
+        if error:
+            return error
+        role = str(user.get("role"))
+        if role == "student":
+            assignment = store.get_assignment(assignment_id, student_id=str(user["id"]))
+        elif role == "teacher":
+            assignment = store.get_assignment(assignment_id, teacher_id=str(user["id"]))
+        else:
+            assignment = store.get_assignment(assignment_id)
+        if assignment is None:
+            return _assignment_not_found_or_forbidden(assignment_id, user)
+        visible = _assignment_view(store, assignment, user, detail=True)
+        return jsonify({"assignment": visible, "data": visible, **visible})
+
+    @bp.post("/assignments/<assignment_id>/open")
+    def assignment_open(assignment_id: str):
+        user, error = _auth_required(store, ("student",))
+        if error:
+            return error
+        assignment = store.mark_assignment_open(assignment_id, str(user["id"]))
+        if assignment is None:
+            return _assignment_not_found_or_forbidden(assignment_id, user)
+        visible = _assignment_view(store, assignment, user, detail=True)
+        return jsonify({"ok": True, "assignment": visible, "data": visible, **visible})
+
+    @bp.post("/assignments/<assignment_id>/questions/<question_id>/check")
+    def assignment_question_check(assignment_id: str, question_id: str):
+        """Check exactly one question and retain the first scored attempt.
+
+        The assignment detail endpoint deliberately strips answer keys.  This
+        endpoint is the only student-visible path that reveals the selected
+        question's key, and it never includes another question's answer.
+        """
+
+        user, error = _auth_required(store, ("student",))
+        if error:
+            return error
+        assignment = store.get_assignment(assignment_id, student_id=str(user["id"]))
+        if assignment is None:
+            return _assignment_not_found_or_forbidden(assignment_id, user)
+        requested_id = _safe_text(question_id, 200)
+        question: Mapping[str, Any] | None = None
+        question_index = -1
+        for index, candidate in enumerate(_assignment_question_list(assignment)):
+            if _assignment_question_id(candidate, index) == requested_id:
+                question = candidate
+                question_index = index
+                break
+        if question is None:
+            return _error("question not found", 404, "question_not_found")
+        payload = _json_body()
+        payload = payload if isinstance(payload, Mapping) else {}
+        if "answer" in payload:
+            answer = payload.get("answer")
+        elif "value" in payload:
+            answer = payload.get("value")
+        else:
+            answer = payload.get("response", payload.get("selected"))
+        existing = store.get_assignment_question_check(assignment_id, str(user["id"]), requested_id)
+        if existing is not None:
+            result = existing.get("result") if isinstance(existing.get("result"), Mapping) else {}
+            return jsonify(
+                {
+                    "ok": True,
+                    "idempotent": True,
+                    "questionId": requested_id,
+                    "correct": bool(result.get("correct")),
+                    "answered": bool(result.get("answered")),
+                    "userAnswer": sanitize_json(existing.get("answer")),
+                    "correctAnswer": sanitize_json(result.get("correctAnswer")),
+                    "explanation": result.get("explanation"),
+                    "result": sanitize_json(result),
+                }
+            )
+        record = _grade_assignment_question(assignment, question, question_index, answer)
+        persisted, idempotent = store.save_assignment_question_check(
+            assignment_id,
+            str(user["id"]),
+            requested_id,
+            answer,
+            record,
+        )
+        if persisted is not None:
+            saved_result = persisted.get("result") if isinstance(persisted.get("result"), Mapping) else record
+            saved_answer = persisted.get("answer")
+        else:
+            saved_result = record
+            saved_answer = answer
+        return jsonify(
+            {
+                "ok": True,
+                "idempotent": bool(idempotent),
+                "questionId": requested_id,
+                "correct": bool(saved_result.get("correct")),
+                "answered": bool(saved_result.get("answered")),
+                "userAnswer": sanitize_json(saved_answer),
+                "correctAnswer": sanitize_json(saved_result.get("correctAnswer")),
+                "explanation": saved_result.get("explanation"),
+                "result": sanitize_json(saved_result),
+            }
+        )
+
+    @bp.post("/assignments/<assignment_id>/submit")
+    def assignment_submit(assignment_id: str):
+        user, error = _auth_required(store, ("student",))
+        if error:
+            return error
+        assignment = store.get_assignment(assignment_id, student_id=str(user["id"]))
+        if assignment is None:
+            return _assignment_not_found_or_forbidden(assignment_id, user)
+        payload = _json_body()
+        payload = payload if isinstance(payload, Mapping) else {}
+        answers = payload.get("answers", payload.get("responses", payload.get("data", {})))
+        if answers is None:
+            answers = {}
+        # A question that was already checked is immutable: a later submit
+        # cannot silently replace the first scored answer.  Unchecked rows are
+        # scored from the submit payload and become first checks themselves.
+        first_checks = store.list_assignment_question_checks(assignment_id, str(user["id"]))
+        effective_answers = _assignment_answers_mapping(answers)
+        for checked_id, checked in first_checks.items():
+            if isinstance(checked, Mapping) and "answer" in checked:
+                effective_answers[checked_id] = checked.get("answer")
+        result = _grade_assignment(assignment, effective_answers, first_checks)
+        for record in result.get("records", []):
+            if not isinstance(record, Mapping):
+                continue
+            store.save_assignment_question_check(
+                assignment_id,
+                str(user["id"]),
+                str(record.get("questionId") or record.get("id") or ""),
+                record.get("userAnswer"),
+                record,
+            )
+        saved, idempotent = store.submit_assignment(assignment_id, str(user["id"]), effective_answers, result)
+        if saved is None:
+            return _assignment_not_found_or_forbidden(assignment_id, user)
+        if not idempotent:
+            store.record_assignment_outcomes(str(user["id"]), assignment_id, result)
+        visible = _assignment_view(store, saved, user, detail=True)
+        persisted_result = visible.get("result") or result
+        return jsonify(
+            {
+                "ok": True,
+                "idempotent": bool(idempotent),
+                "result": persisted_result,
+                "assignment": visible,
+                "data": visible,
+                **visible,
+            }
+        )
 
     @bp.get("/data")
     def list_data():
@@ -2201,7 +3545,7 @@ def _create_blueprint(store: ReadingTrainerStore):
             if supplied_remote is None:
                 remote = {}
                 for section, table_id in cfg["tables"].items():
-                    if section not in BUSINESS_SECTIONS and section not in ("accounts", "classes", "invites"):
+                    if section not in BUSINESS_SECTIONS and section not in ("accounts", "classes", "invites", "assignments"):
                         continue
                     table_url = base_url + "/" + str(table_id) + "/records"
                     items: list[Mapping[str, Any]] = []

@@ -1171,6 +1171,34 @@
 
   /* ===== 教师中心面板 ===== */
   [data-pane="teacher"] { max-width: 1080px; margin: 0 auto; }
+  #itr-app .itr-assignment-panel { max-width: 1080px; margin: 0 auto; }
+  #itr-app .itr-assignment-summary { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  #itr-app .itr-assignment-summary .spacer { flex:1; }
+  #itr-app .itr-assignment-filters { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 16px; }
+  #itr-app .itr-assignment-filter { border:1px solid var(--itr-border); background:var(--itr-surface); color:var(--itr-text); border-radius:999px; padding:7px 13px; font:inherit; font-size:13px; cursor:pointer; }
+  #itr-app .itr-assignment-filter.active { background:var(--itr-primary); color:#fff; border-color:var(--itr-primary); }
+  #itr-app .itr-assignment-list { display:grid; gap:12px; }
+  #itr-app .itr-assignment-card { background:var(--itr-surface); border:1px solid var(--itr-border); border-radius:var(--itr-r-md); padding:16px 18px; box-shadow:var(--itr-shadow-1); }
+  #itr-app .itr-assignment-card.new { border-color:var(--itr-primary); box-shadow:0 4px 16px rgba(0,137,254,.14); }
+  #itr-app .itr-assignment-card-head { display:flex; align-items:flex-start; gap:10px; }
+  #itr-app .itr-assignment-card-head h4 { margin:0; font-size:16px; flex:1; }
+  #itr-app .itr-assignment-status { font-size:11px; padding:3px 8px; border-radius:999px; white-space:nowrap; background:var(--itr-fill-2); color:var(--itr-ink-2); }
+  #itr-app .itr-assignment-status.new { background:var(--itr-primary-soft); color:var(--itr-primary-on-soft); }
+  #itr-app .itr-assignment-status.done { background:#eaf8ef; color:#17683f; }
+  #itr-app .itr-assignment-meta { font-size:12px; color:var(--itr-muted); margin-top:6px; }
+  #itr-app .itr-assignment-desc { font-size:13px; color:var(--itr-ink-2); margin-top:8px; white-space:pre-wrap; }
+  #itr-app .itr-assignment-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  #itr-app .itr-assignment-answer { margin-top:16px; border-top:1px solid var(--itr-border); padding-top:16px; }
+  #itr-app .itr-assignment-answer .itr-q { animation:none; }
+  #itr-app .itr-assignment-result { margin-top:14px; padding:12px 14px; border-radius:10px; background:var(--itr-primary-soft); color:var(--itr-primary-on-soft); font-size:14px; }
+  #itr-app .itr-assignment-compose { margin-top:12px; padding:14px; border:1px solid var(--itr-border); border-radius:var(--itr-r-md); background:var(--itr-fill); }
+  #itr-app .itr-assignment-compose .itr-row { align-items:flex-end; }
+  #itr-app .itr-assignment-unread { display:inline-flex; min-width:18px; height:18px; align-items:center; justify-content:center; padding:0 5px; border-radius:999px; background:var(--itr-red); color:#fff; font-size:11px; font-weight:700; }
+  #itr-app .itr-assignment-reminder { display:none; margin:0 0 14px; padding:12px 14px; border:1px solid #9acbf3; border-radius:var(--itr-r-md); background:var(--itr-primary-soft); color:var(--itr-primary-on-soft); }
+  #itr-app .itr-assignment-reminder.show { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  #itr-app .itr-assignment-reminder .spacer { flex:1; }
+  #itr-app .itr-student-context { display:none; margin-top:4px; padding:10px 12px; border-radius:10px; background:var(--itr-fill); font-size:13px; color:var(--itr-ink-2); }
+  #itr-app .itr-student-context b { color:var(--itr-text); }
   .itr-tc-header { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
   .itr-tc-header h3 { margin: 0; font-family: var(--itr-serif); font-size: 17px; }
   .itr-tc-students { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 20px; }
@@ -1528,9 +1556,16 @@
   <!-- Pane: practice -->
   <section class="itr-pane" data-pane="practice">
 
+  <div class="itr-assignment-reminder" id="itr-assignment-reminder" role="status" aria-live="polite">
+    <span class="itr-assignment-reminder-icon">🔔</span>
+    <span id="itr-assignment-reminder-text">有新的题卡作业</span>
+    <span class="spacer"></span>
+    <button type="button" class="itr-btn itr-primary" id="itr-assignment-reminder-open">查看题卡作业</button>
+  </div>
+
   <!-- Student & score tracking -->
   <div class="itr-card itr-stu-card">
-    <label><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> 选择学生（按班级分组，可多选 / 一键全部）</label>
+    <label id="itr-student-select-label"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> 选择学生（按班级分组，可多选 / 一键全部）</label>
     <div class="itr-row itr-stu-actions" id="itr-stu-actions">
       <button class="itr-btn itr-ghost" id="itr-stu-all" type="button">一键全部</button>
       <button class="itr-btn itr-ghost" id="itr-stu-clear" type="button">取消选择</button>
@@ -1538,6 +1573,7 @@
       <button class="itr-btn itr-ghost" id="itr-remind" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg> 复习提醒</button>
     </div>
     <div id="itr-custom-settings" class="itr-custom-settings" hidden></div>
+    <div class="itr-student-context" id="itr-student-context"></div>
     <div id="itr-student-selector"></div>
     <div class="itr-stu-hint" id="itr-stu-hint">请选择要练习的学生。教师可选择一个或多个学生生成题卡，成绩会分别计入各自名下。</div>
   </div>
@@ -1682,11 +1718,25 @@
     <div class="itr-book-panel itr-stats-panel" id="itr-stats-panel"></div>
   </section>
 
-  <!-- Pane: teacher -->
-  <section class="itr-pane" data-pane="teacher">
-    <div class="itr-card">
-      <h3><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="1"/><path d="M12 17v4M9 21h6"/></svg> 教师中心</h3>
-      <p class="itr-hint">班级管理、作业布置（深链接生成）、成绩总览将在后续版本加入（计划 P3）。当前你已可在「练习答题」中生成题目，复制本页地址并追加参数（如 <code>?role=student</code>）即可分享给学生。</p>
+  <!-- Pane: assignments -->
+  <section class="itr-pane" data-pane="assignments">
+    <div class="itr-assignment-panel">
+      <div class="itr-card">
+        <div class="itr-assignment-summary">
+          <h3 style="margin:0;">📋 题卡作业</h3>
+          <span class="itr-meta" id="itr-assignment-summary-text" style="margin:0;">正在读取作业…</span>
+          <span class="spacer"></span>
+          <button type="button" class="itr-btn itr-ghost" id="itr-assignment-refresh">刷新</button>
+        </div>
+        <div class="itr-assignment-filters" id="itr-assignment-filters">
+          <button type="button" class="itr-assignment-filter active" data-assignment-filter="all">全部</button>
+          <button type="button" class="itr-assignment-filter" data-assignment-filter="new">新作业</button>
+          <button type="button" class="itr-assignment-filter" data-assignment-filter="pending">未完成</button>
+          <button type="button" class="itr-assignment-filter" data-assignment-filter="completed">已完成</button>
+        </div>
+        <div class="itr-assignment-list" id="itr-assignment-list"></div>
+        <div class="itr-assignment-answer" id="itr-assignment-answer" style="display:none;"></div>
+      </div>
     </div>
   </section>
 
@@ -2003,6 +2053,7 @@
   var API_V2 = '/reading-trainer/api/v2';
   var serverState = {
     accounts: [], invites: [], classes: [],
+    membership: {},
     ai: { provider:'', endpoint:'', model:'', enabled:false, hasKey:false },
     feishu: { enabled:false, configured:false, authorized:false },
     userData: {}
@@ -2030,6 +2081,8 @@
   function applyServerState(next) {
     if (!next || typeof next !== 'object') return;
     ['accounts','invites','classes'].forEach(function(k){ if(Array.isArray(next[k])) serverState[k]=next[k]; });
+    if (next.membership && typeof next.membership === 'object') serverState.membership = next.membership;
+    else if (next.memberships && typeof next.memberships === 'object') serverState.membership = next.memberships;
     if (next.ai && typeof next.ai === 'object') serverState.ai = Object.assign({}, serverState.ai, next.ai);
     if (next.feishu && typeof next.feishu === 'object') serverState.feishu = Object.assign({}, serverState.feishu, next.feishu);
     if (next.userData && typeof next.userData === 'object') serverState.userData = next.userData;
@@ -2233,6 +2286,29 @@
     };
     return m[t] || t;
   }
+  // Heading options arrive from different AI/provider versions.  Keep a
+  // display value and a submitted value separate so objects never fall
+  // through String(object) and render as "[object Object]".
+  function headingOptionText(option) {
+    if (option == null) return "";
+    if (typeof option === "string" || typeof option === "number") return String(option);
+    if (typeof option === "object") {
+      return String(option.text || option.heading || option.title || option.label || option.value || option.id || "");
+    }
+    return "";
+  }
+  function headingOptionValue(option) {
+    if (option == null) return "";
+    if (typeof option === "string" || typeof option === "number") return String(option);
+    if (typeof option === "object") {
+      return String(option.value || option.heading || option.text || option.label || option.id || "");
+    }
+    return "";
+  }
+  function normalizeHeadingAnswer(answer) {
+    if (Array.isArray(answer)) return answer.map(headingOptionValue);
+    return answer;
+  }
   function badge(exam, typeLabelTxt) {
     var e = exam === "IELTS" ? '<span class="itr-badge ielts">IELTS</span>'
       : (exam === "TOEFL" ? '<span class="itr-badge toefl">TOEFL</span>' : '');
@@ -2244,7 +2320,7 @@
     if (!q) return "—";
     var t = normType(q.type);
     if (t === "headings") {
-      return (q.items || []).map(function (it, i) { return escapeHtml(it.para) + " → " + escapeHtml(q.answer[i] || "—"); }).join("； ");
+      return (q.items || []).map(function (it, i) { return escapeHtml(it.para) + " → " + escapeHtml(headingOptionValue(q.answer && q.answer[i]) || "—"); }).join("； ");
     }
     if (t === "sentence-end") {
       var a = q.answer || {};
@@ -2679,7 +2755,9 @@
     return '<div class="itr-article">' + splitParagraphs(article).map(function (p) { return "<p>" + escapeHtml(p) + "</p>"; }).join("") + "</div>";
   }
 
-  function renderQuestion(q) {
+  function renderQuestion(q, options) {
+    options = options || {};
+    var assignmentMode = !!options.assignment;
     var html = '<div class="itr-q" data-type="' + q.type + '">';
     html += '<div class="itr-q-head"><span class="itr-q-num">Q' + q.id + ".</span>" + badge(q.exam, typeLabel(q.type)) + "</div>";
     html += '<div class="itr-q-body">' + escapeHtml(q.prompt).replace(/\n/g, "<br>") + "</div>";
@@ -2707,7 +2785,11 @@
       html += '<div class="itr-headings">';
       (q.items || []).forEach(function (it, i) {
         html += '<div class="itr-hd-row"><div class="itr-para">' + escapeHtml(it.para) + '：' + escapeHtml(it.topic) + '</div><select data-i="' + i + '"><option value="">— 选择小标题 —</option>';
-        (q.options || []).forEach(function (h) { html += '<option value="' + escapeHtml(h) + '">' + escapeHtml(h) + "</option>"; });
+        (q.options || []).forEach(function (h) {
+          var value = headingOptionValue(h), text = headingOptionText(h);
+          if (!value || !text) return;
+          html += '<option value="' + escapeHtml(value) + '">' + escapeHtml(text) + "</option>";
+        });
         html += "</select></div>";
       });
       html += "</div>";
@@ -2727,11 +2809,18 @@
       });
       html += "</div>";
     }
-    html += '<div class="itr-q-foot"><button type="button" class="itr-btn itr-ghost itr-check">核对答案</button>';
-    html += '<button type="button" class="itr-link itr-showans">直接显示答案</button>';
-    html += '<button type="button" class="itr-link itr-explain" data-qid="' + q.id + '">AI 讲解</button></div>';
-    html += '<div class="itr-answer-box"><div><span class="itr-ans">正确答案：' + answerDisplay(q) + "</span></div>";
-    html += '<div class="itr-exp">' + escapeHtml(q.explanation || "（无解析）").replace(/\n/g, "<br>") + "</div></div>";
+    if (assignmentMode) {
+      html += '<div class="itr-q-foot"><button type="button" class="itr-btn itr-ghost itr-assignment-check">核对答案</button>';
+      html += '<button type="button" class="itr-link itr-assignment-showans" disabled>查看正确答案</button>';
+      html += '<button type="button" class="itr-link itr-assignment-explain" disabled>AI 讲解</button></div>';
+      html += '<div class="itr-answer-box itr-assignment-feedback"><div class="itr-assignment-feedback-text">完成本题后可单独核对答案。</div></div>';
+    } else {
+      html += '<div class="itr-q-foot"><button type="button" class="itr-btn itr-ghost itr-check">核对答案</button>';
+      html += '<button type="button" class="itr-link itr-showans">直接显示答案</button>';
+      html += '<button type="button" class="itr-link itr-explain" data-qid="' + q.id + '">AI 讲解</button></div>';
+      html += '<div class="itr-answer-box"><div><span class="itr-ans">正确答案：' + answerDisplay(q) + "</span></div>";
+      html += '<div class="itr-exp">' + escapeHtml(q.explanation || "（无解析）").replace(/\n/g, "<br>") + "</div></div>";
+    }
     html += "</div>";
     return html;
   }
@@ -2766,9 +2855,9 @@
     } else if (q.type === "headings") {
       var hrows = card.querySelectorAll(".itr-hd-row select");
       correct = true;
-      hrows.forEach(function (sel, i) { if (sel.value !== (q.answer[i] || "")) correct = false; });
+      hrows.forEach(function (sel, i) { if (sel.value !== headingOptionValue(q.answer && q.answer[i])) correct = false; });
       hrows.forEach(function (sel, i) {
-        sel.style.borderColor = (sel.value === (q.answer[i] || "")) ? "var(--itr-green)" : "var(--itr-red)";
+        sel.style.borderColor = (sel.value === headingOptionValue(q.answer && q.answer[i])) ? "var(--itr-green)" : "var(--itr-red)";
       });
     } else if (q.type === "sentence-end") {
       var srows = card.querySelectorAll(".itr-send-row select");
@@ -2860,6 +2949,93 @@
     "sentence-end": "句尾配对：把句子前半与结尾视为一个完整意群，重点看逻辑衔接（因果、转折、举例）与代词指代，避免被表面相似词误导。"
   };
 
+  // Both ordinary practice and assignments use this one report template.
+  // Keeping the markup in one renderer prevents the two result pages from
+  // drifting apart as new score sections are added.
+  function buildPracticeReportMarkup(report) {
+    report = report || {};
+    var records = Array.isArray(report.records) ? report.records : [];
+    var total = Number(report.total != null ? report.total : records.length) || 0;
+    var right = Number(report.right != null ? report.right : records.filter(function (r) { return r.correct; }).length) || 0;
+    var unanswered = Number(report.unanswered != null ? report.unanswered : records.filter(function (r) { return !r.answered; }).length) || 0;
+    var pct = Number(report.pct != null ? report.pct : (total ? Math.round(right / total * 100) : 0)) || 0;
+    var tier = gradeTier(pct);
+    var byType = report.byType || {};
+    var byArt = Array.isArray(report.byArt) ? report.byArt : [];
+    var byExam = report.byExam || {};
+    var wrongs = Array.isArray(report.wrongs) ? report.wrongs : records.filter(function (r) { return !r.correct; });
+    var ringDeg = Math.round(pct * 3.6);
+    var h = '<div class="itr-report">';
+    h += '<div class="itr-rep-hero">';
+    h += '<div class="itr-ring" style="background:conic-gradient(' + tier.color + ' ' + ringDeg + 'deg,#e5e7eb 0);">' +
+         '<span>' + pct + '%<small>正确率</small></span></div>';
+    h += '<div class="itr-hero-main"><h3>批改结果 <span class="itr-grade-tag" style="background:' + tier.color + '">' + tier.label + '</span></h3>';
+    h += '<div class="itr-hero-stats">' +
+         '<div>答对 <b>' + right + '</b> / ' + total + ' 题</div>' +
+         '<div>答错 <b>' + (total - right - unanswered) + '</b> 题</div>' +
+         '<div>未作答 <b>' + unanswered + '</b> 题</div>' +
+         '</div></div></div>';
+    h += '<div class="itr-rep-body">';
+    h += '<div class="itr-rep-h4">' + ICONS.chart + ' 各题型正确率</div><div class="itr-bars">';
+    Object.keys(byType).forEach(function (t) {
+      var d = byType[t] || {}, dTotal = Number(d.total || 0), dRight = Number(d.right || 0);
+      var p = dTotal ? Math.round(dRight / dTotal * 100) : 0;
+      h += '<div class="itr-bar-row"><div class="itr-bar-label">' + escapeHtml(typeLabel(t)) + '</div>' +
+           '<div class="itr-bar-track"><div class="itr-bar-fill" style="width:' + p + '%;background:' + barColor(p) + '"></div></div>' +
+           '<div class="itr-bar-val">' + dRight + '/' + dTotal + '</div></div>';
+    });
+    h += '</div>';
+    h += '<div class="itr-rep-h4">' + ICONS.file + ' 分项统计</div><div class="itr-chips">';
+    if (byArt.length > 1) {
+      byArt.forEach(function (d, i) {
+        h += '<div class="itr-chip"><div class="k">文章 ' + (i + 1) + '</div><div class="v">' + d.right + '/' + d.total + '</div></div>';
+      });
+    }
+    Object.keys(byExam).forEach(function (e) {
+      var d = byExam[e] || {};
+      h += '<div class="itr-chip"><div class="k">' + escapeHtml(e) + '</div><div class="v">' + (d.right || 0) + '/' + (d.total || 0) + '</div></div>';
+    });
+    h += '</div>';
+    h += '<div class="itr-rep-h4">' + ICONS.x + ' 错题与解析（' + wrongs.length + '）</div>';
+    if (!wrongs.length) {
+      h += '<div class="itr-allright">' + ICONS.party + ' 全部答对，太棒了！</div>';
+    } else {
+      h += '<div class="itr-wrong-list">';
+      wrongs.forEach(function (r) {
+        var q = r.q || {};
+        h += '<div class="itr-wrong-item">' +
+             '<div class="wq-top">Q' + escapeHtml(String(q.id == null ? '' : q.id)) + ' · ' + escapeHtml(typeLabel(q.type)) + (q.exam ? ' · ' + escapeHtml(q.exam) : '') + '</div>' +
+             '<div class="wq-p">' + escapeHtml(q.prompt || '').replace(/\n/g, "<br>") + '</div>' +
+             '<div class="wq-a"><span class="wq-yours">你的答案：' + escapeHtml(r.user || '（未作答）') + '</span>' +
+             '<span class="wq-right">正确答案：' + answerDisplay(q) + '</span></div>' +
+             '<div class="wq-exp">' + ICONS.bulb + ' ' + escapeHtml(q.explanation || "（无解析）").replace(/\n/g, "<br>") + '</div>' +
+             '</div>';
+      });
+      h += '</div>';
+    }
+    var weak = Object.keys(byType).map(function (t) {
+      var d = byType[t] || {};
+      return { t: t, p: d.total ? d.right / d.total : 0 };
+    }).filter(function (x) { return x.p < 1; }).sort(function (a, b) { return a.p - b.p; });
+    h += '<div class="itr-rep-h4">' + ICONS.target + ' 能力分析与学习建议</div><div class="itr-advice">';
+    if (pct >= 90) h += '<div>整体表现优秀，理解与定位能力扎实。可尝试提高一个难度级别，或缩短做题时间以贴近考试节奏。</div>';
+    else if (pct >= 60) h += '<div>整体达标，仍有稳定提升空间。重点巩固下面较弱的题型：</div>';
+    else h += '<div>基础需要加强，建议先降低一个难度级别打牢基础，并针对下列薄弱题型专项训练：</div>';
+    if (weak.length) {
+      h += '<ul>';
+      weak.slice(0, 3).forEach(function (x) {
+        h += '<li><b>' + escapeHtml(typeLabel(x.t)) + '</b>（正确率 ' + Math.round(x.p * 100) + '%）：' + escapeHtml(TYPE_ADVICE[x.t] || "回顾原文定位与同义替换。") + '</li>';
+      });
+      h += '</ul>';
+    }
+    if (unanswered > 0) h += '<div style="margin-top:6px;">有 ' + unanswered + ' 题未作答——考试中即使不确定也应先猜一个答案，避免白丢分。</div>';
+    if (wrongs.length) h += '<div style="margin-top:6px;">' + ICONS.clip + ' 本次 ' + wrongs.length + ' 道错题已自动存入「' + ICONS.clip + ' 错题记录」，点下方按钮可随时重做巩固（连续答对 5 次即移出）。</div>';
+    if (report.stuLabel) h += '<div style="margin-top:6px;">' + ICONS.trend + ' 本次成绩已计入「' + escapeHtml(report.stuLabel) + '」的成绩档案。点顶部「' + ICONS.trend + ' 成绩档案」可查看独立曲线。</div>';
+    if (report.adaptNote) h += report.adaptNote;
+    h += '</div></div></div>';
+    return h;
+  }
+
   function gradeAll(sections, cardsBySec, out) {
     var records = [];
     sections.forEach(function (sec, si) {
@@ -2879,9 +3055,16 @@
     var tier = gradeTier(pct);
 
     // capture current student + level/exam context for the score record
-    var stu = currentStudent();
-    var targetIds = getTargetStudentIds();
-    if (!targetIds.length) targetIds = [stu.id];
+    var stu = (currentUser && currentUser.role === 'teacher')
+      ? { id: currentUser.id, name: currentUser.username || '教师' }
+      : currentStudent();
+    // A teacher's multi-selection is only for assignment recipients. Never
+    // write local grading/wrong-book data into selected students; teacher
+    // practice (if submitted) belongs to the teacher's own account.
+    var targetIds = (currentUser && currentUser.role === 'teacher')
+      ? (currentUser.id ? [currentUser.id] : [])
+      : getTargetStudentIds();
+    if (!targetIds.length && (!currentUser || currentUser.role !== 'teacher')) targetIds = [stu.id];
     var lvId = parseInt($("itr-level").value, 10) || 5;
     var ex = $("itr-exam") ? $("itr-exam").value : "both";
 
@@ -3015,7 +3198,13 @@
     if (adaptNote) h += adaptNote;
     h += '</div>';
 
-    h += '</div></div>'; // rep-body + report
+    // Render the final report through the shared template used by assignments.
+    // The calculations and persistence above remain practice-specific, while
+    // the visible score table has one source of truth.
+    var sharedStuLabel = (targetIds.length > 1) ? (targetIds.length + " 名学生") : ((stu.name || "学生") + "（" + stu.id + "）");
+    h = buildPracticeReportMarkup({ records: records, total: total, right: right, unanswered: unanswered, pct: pct, byType: byType, byArt: byArt, byExam: byExam, wrongs: wrongs, stuLabel: sharedStuLabel, adaptNote: adaptNote });
+
+    // buildPracticeReportMarkup already closes the report container.
 
     // insert / replace report at top of output
     var old = out.querySelector(".itr-report");
@@ -3027,21 +3216,91 @@
     if (node.scrollIntoView) node.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function bindQuestion(card, q) {
+  function assignmentResponseResult(response) {
+    var result = response && (response.result || response.data || response);
+    if (result && result.result && typeof result.result === "object") result = result.result;
+    return result && typeof result === "object" ? result : {};
+  }
+  function assignmentHasAnswer(result) {
+    return !!(result && (Object.prototype.hasOwnProperty.call(result, "correctAnswer") ||
+      Object.prototype.hasOwnProperty.call(result, "correct_answer") ||
+      Object.prototype.hasOwnProperty.call(result, "answer")));
+  }
+  function assignmentCorrectAnswer(result) {
+    if (!result) return undefined;
+    if (Object.prototype.hasOwnProperty.call(result, "correctAnswer")) return result.correctAnswer;
+    if (Object.prototype.hasOwnProperty.call(result, "correct_answer")) return result.correct_answer;
+    if (Object.prototype.hasOwnProperty.call(result, "answer")) return result.answer;
+    return undefined;
+  }
+  function assignmentLockAnswerControls(card) {
+    card.classList.add("itr-assignment-locked");
+    card.querySelectorAll(".itr-opt, .itr-tfng button").forEach(function (el) {
+      el.setAttribute("aria-disabled", "true");
+    });
+    card.querySelectorAll(".itr-fib input, .itr-match select, .itr-headings select, .itr-send select, .itr-diagram input").forEach(function (el) {
+      el.disabled = true;
+    });
+  }
+  function renderAssignmentQuestionFeedback(card, q, result) {
+    result = result || {};
+    if (assignmentHasAnswer(result)) {
+      q.answer = q.type === "headings" ? normalizeHeadingAnswer(assignmentCorrectAnswer(result)) : assignmentCorrectAnswer(result);
+    }
+    if (result.explanation != null) q.explanation = String(result.explanation || "");
+    var correct = result.correct === true || result.isCorrect === true;
+    if (result.correct == null && result.isCorrect == null && q.answer != null) correct = checkQuestion(card, q);
+    var box = card.querySelector(".itr-assignment-feedback") || card.querySelector(".itr-answer-box");
+    if (!box) return;
+    var answerText = q.answer != null ? answerDisplay(q) : "（答案暂不可用）";
+    var explanation = q.explanation || result.explanation || "（暂无文字解析，可使用 AI 讲解）";
+    box.innerHTML = '<div><span class="itr-ans">' + (correct ? "✓ 回答正确" : "✗ 需要订正") + "</span></div>" +
+      '<div class="itr-assignment-correct-answer">正确答案：' + answerText + "</div>" +
+      '<div class="itr-exp">' + escapeHtml(explanation).replace(/\n/g, "<br>") + "</div>";
+    box.classList.add("show");
+    var checkBtn = card.querySelector(".itr-assignment-check");
+    if (checkBtn) { checkBtn.disabled = true; checkBtn.textContent = "已核对"; }
+    var showBtn = card.querySelector(".itr-assignment-showans");
+    if (showBtn) showBtn.disabled = false;
+    var explainBtn = card.querySelector(".itr-assignment-explain");
+    if (explainBtn) explainBtn.disabled = false;
+    assignmentLockAnswerControls(card);
+  }
+  function checkAssignmentQuestion(card, q, context) {
+    if (!context || context.assignmentId == null || card.classList.contains("itr-assignment-locked")) return;
+    var userAnswer = collectAssignmentAnswer(card, q);
+    var userState = getUserAnswer(card, q);
+    if (!userState.answered) { showToast("请先完成本题，再核对答案。"); return; }
+    var button = card.querySelector(".itr-assignment-check");
+    if (button) { button.disabled = true; button.classList.add("itr-busy"); }
+    var path = assignmentPath(context.assignmentId, "/questions/" + encodeURIComponent(String(q.id)) + "/check");
+    apiV2(path, { method: "POST", body: JSON.stringify({ answer: userAnswer, response: userAnswer }) }).then(function (response) {
+      renderAssignmentQuestionFeedback(card, q, assignmentResponseResult(response));
+    }).catch(function (err) {
+      if (button) { button.disabled = false; button.classList.remove("itr-busy"); }
+      showToast("核对答案失败：" + err.message);
+    });
+  }
+
+  function bindQuestion(card, q, context) {
     card.querySelectorAll(".itr-opt").forEach(function (o) {
       o.addEventListener("click", function () {
+        if (card.classList.contains("itr-assignment-locked")) return;
         card.querySelectorAll(".itr-opt").forEach(function (x) { x.classList.remove("sel"); });
         o.classList.add("sel");
       });
     });
     card.querySelectorAll(".itr-tfng button").forEach(function (b) {
       b.addEventListener("click", function () {
+        if (card.classList.contains("itr-assignment-locked")) return;
         card.querySelectorAll(".itr-tfng button").forEach(function (x) { x.classList.remove("sel"); });
         b.classList.add("sel");
       });
     });
-    card.querySelector(".itr-check").addEventListener("click", function () { checkQuestion(card, q); });
-    card.querySelector(".itr-showans").addEventListener("click", function () {
+    var checkBtn = card.querySelector(".itr-check");
+    if (checkBtn) checkBtn.addEventListener("click", function () { checkQuestion(card, q); });
+    var showBtn = card.querySelector(".itr-showans");
+    if (showBtn) showBtn.addEventListener("click", function () {
       var box = card.querySelector(".itr-answer-box");
       box.classList.add("show");
       if (q.type === "multiple-choice" || q.type === "vocabulary") {
@@ -3052,6 +3311,14 @@
     });
     var exBtn = card.querySelector(".itr-explain");
     if (exBtn) exBtn.addEventListener("click", function () { explainQuestion(card, q); });
+    var assignmentCheck = card.querySelector(".itr-assignment-check");
+    if (assignmentCheck) assignmentCheck.addEventListener("click", function () { checkAssignmentQuestion(card, q, context); });
+    var assignmentShow = card.querySelector(".itr-assignment-showans");
+    if (assignmentShow) assignmentShow.addEventListener("click", function () {
+      var box = card.querySelector(".itr-answer-box"); if (box) box.classList.add("show");
+    });
+    var assignmentExplain = card.querySelector(".itr-assignment-explain");
+    if (assignmentExplain) assignmentExplain.addEventListener("click", function () { explainQuestion(card, q); });
   }
 
   // ---------- Rendering: worksheet (print / PDF) ----------
@@ -3071,7 +3338,7 @@
       });
     } else if (q.type === "headings") {
       (q.items || []).forEach(function (it, i) {
-        h += '<div class="itr-wq-opt">' + escapeHtml(it.para) + '：' + escapeHtml(it.topic) + ' &nbsp;→&nbsp; 标题：<span class="itr-wq-blank"></span> <span style="color:#888">(' + escapeHtml(q.answer[i] || "") + ")</span></div>";
+        h += '<div class="itr-wq-opt">' + escapeHtml(it.para) + '：' + escapeHtml(it.topic) + ' &nbsp;→&nbsp; 标题：<span class="itr-wq-blank"></span> <span style="color:#888">(' + escapeHtml(headingOptionValue(q.answer && q.answer[i]) || "") + ")</span></div>";
       });
     } else if (q.type === "diagram") {
       (q.steps || []).forEach(function (st, i) {
@@ -3131,6 +3398,9 @@
   }
 
   // ---------- Master render ----------
+  // In-memory only: the latest generated question set can be sent by a teacher
+  // as an assignment. It is never written to browser storage.
+  var latestGenerated = null;
   function renderCards(sections, showArticle) {
     var out = $("itr-cards");
     var html = "";
@@ -3147,7 +3417,11 @@
       total += sec.questions.length;
     });
     html += '<div class="itr-submit-bar"><button type="button" class="itr-btn itr-primary" id="itr-submit-grade">' + ICONS.pencil + ' 提交批改与分析</button>' +
-            '<span class="itr-hint" style="margin:0;">提交后自动判分、汇总错题并给出能力分析（共 ' + total + ' 题）</span></div>';
+            '<span class="itr-hint" style="margin:0;">提交后自动判分、汇总错题并给出能力分析（共 ' + total + ' 题）</span>';
+    if (currentUser && currentUser.role === 'teacher') {
+      html += '<button type="button" class="itr-btn itr-ghost" id="itr-send-assignment" disabled>📋 发送为题卡作业</button>';
+    }
+    html += '</div>';
     out.innerHTML = html;
 
     var cardsBySec = [];
@@ -3174,6 +3448,11 @@
 
     var submitBtn = $("itr-submit-grade");
     if (submitBtn) submitBtn.addEventListener("click", function () { gradeAll(sections, cardsBySec, out); });
+    var sendBtn = $("itr-send-assignment");
+    if (sendBtn) {
+      updateAssignmentSendButton(sendBtn);
+      sendBtn.addEventListener("click", function () { openAssignmentComposer(sections); });
+    }
   }
 
   function renderWorksheet(sections, level, exam, withKey) {
@@ -3212,9 +3491,439 @@
     // global numbering for answer-key consistency
     var g = 0;
     sections.forEach(function (sec) { sec.questions.forEach(function (q) { q.id = ++g; q.type = normType(q.type); }); });
+    latestGenerated = { sections: cloneData(sections, []), level: level && level.id, exam: exam, showArticle: showArticle };
     if (mode === "pdf") renderWorksheet(sections, level, exam, withKey);
     else renderCards(sections, showArticle);
   }
+
+  // ---------- Assignments (server-backed, in-memory UI state only) ----------
+  var assignmentState = { list: [], filter: "all", active: null, summary: {}, unread: 0, loading: false };
+  var assignmentRefreshTimer = null;
+  function assignmentPath(id, suffix) {
+    return '/assignments/' + encodeURIComponent(String(id)) + (suffix || '');
+  }
+  function assignmentId(a) {
+    return a && (a.id != null ? a.id : (a.assignmentId != null ? a.assignmentId : (a.assignment_id != null ? a.assignment_id : a.uuid)));
+  }
+  function assignmentObjectFromResponse(res) {
+    if (!res || typeof res !== 'object') return null;
+    var value = res.assignment || res.item || res.result && res.result.assignment || res.data && res.data.assignment;
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    if (res.id != null || res.assignmentId != null || res.assignment_id != null) return res;
+    return null;
+  }
+  function assignmentListFromResponse(res) {
+    if (!res || typeof res !== 'object') return [];
+    var values = res.assignments || res.items || res.results || res.data;
+    if (values && !Array.isArray(values) && typeof values === 'object') values = values.assignments || values.items || values.results;
+    if (Array.isArray(values)) return values;
+    var one = assignmentObjectFromResponse(res);
+    return one ? [one] : [];
+  }
+  function assignmentQuestions(a) {
+    if (!a) return [];
+    var candidates = [a.redactedQuestions, a.redacted_questions, a.questions, a.questionCards, a.question_cards, a.cards];
+    for (var ci = 0; ci < candidates.length; ci++) {
+      var qs = candidates[ci];
+      if (qs && !Array.isArray(qs) && typeof qs === 'object') qs = qs.questions || qs.items || qs.cards;
+      if (Array.isArray(qs) && qs.length) return qs;
+    }
+    var sections = a.sections || a.questionSections || a.question_sections;
+    if (Array.isArray(sections)) {
+      return sections.reduce(function (all, section) { return all.concat(Array.isArray(section.questions) ? section.questions : []); }, []);
+    }
+    return [];
+  }
+  function normalizeAssignmentQuestion(raw, index) {
+    var q = Object.assign({}, raw || {});
+    q.id = q.id != null ? q.id : (q.questionId != null ? q.questionId : (q.question_id != null ? q.question_id : index + 1));
+    q.prompt = q.prompt || q.question || q.stem || q.text || q.title || '';
+    q.type = normType(q.type || q.kind || q.questionType || q.question_type || 'multiple-choice');
+    var options = q.options || q.choices || q.answers;
+    if (Array.isArray(options)) {
+      if (q.type === 'headings') {
+        q.options = options.map(function (o) {
+          var value = headingOptionValue(o), text = headingOptionText(o);
+          return value && text ? { value: value, text: text } : null;
+        }).filter(Boolean);
+        q.answer = normalizeHeadingAnswer(q.answer);
+      } else {
+        q.options = options.map(function (o, i) {
+          if (typeof o === 'string') return { label: String.fromCharCode(65 + i), text: o };
+          return { label: o && (o.label || o.id || String.fromCharCode(65 + i)), text: o && (o.text || o.value || o.content || '') };
+        });
+      }
+    }
+    if (q.type === 'true-false-notgiven' && !q.options) q.options = [];
+    if (q.items && !Array.isArray(q.items) && typeof q.items === 'object') q.items = q.items.items || [];
+    if (q.steps && !Array.isArray(q.steps) && typeof q.steps === 'object') q.steps = q.steps.steps || [];
+    if (q.beginnings && !Array.isArray(q.beginnings) && typeof q.beginnings === 'object') q.beginnings = q.beginnings.items || [];
+    if (q.endings && !Array.isArray(q.endings) && typeof q.endings === 'object') q.endings = q.endings.items || [];
+    return q;
+  }
+  function assignmentStatus(a) {
+    var value = a && (a.studentStatus || a.student_status || a.progress || a.status || a.state || '');
+    return String(value || '').toLowerCase().replace(/[ _-]+/g, '');
+  }
+  function assignmentIsCompleted(a) {
+    var status = assignmentStatus(a);
+    return !!(a && (a.completed || a.isCompleted || a.submitted || a.submittedAt || a.submitted_at || status === 'completed' || status === 'complete' || status === 'done' || status === 'finished' || status === 'submitted'));
+  }
+  function assignmentIsNew(a) {
+    var status = assignmentStatus(a);
+    return !!(a && (a.isNew || a.is_new || a.unread || a.unreadCount > 0 || a.read === false || a.isRead === false || status === 'new' || status === 'assigned'));
+  }
+  function assignmentTitle(a) { return String(a && (a.title || a.name || a.subject || '题卡作业')); }
+  function assignmentDescription(a) { return String(a && (a.description || a.instructions || a.note || '') || ''); }
+  function assignmentDeadline(a) { return a && (a.dueAt || a.due_at || a.deadline || a.endAt || a.end_at); }
+  function assignmentDate(value) {
+    if (!value) return '';
+    var d = new Date(value); if (isNaN(d.getTime())) return String(value);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  function assignmentSummaryFromResponse(res, list) {
+    var summary = (res && (res.summary || res.meta && res.meta.summary || res.data && res.data.summary)) || {};
+    var unread = Number(summary.unread != null ? summary.unread : (summary.unreadCount != null ? summary.unreadCount : (res && (res.unread != null ? res.unread : res.unreadCount))));
+    if (!isFinite(unread)) unread = list.filter(assignmentIsNew).length;
+    var pending = Number(summary.pending != null ? summary.pending : summary.incomplete);
+    if (!isFinite(pending)) pending = list.filter(function (a) { return !assignmentIsCompleted(a); }).length;
+    var completed = Number(summary.completed);
+    if (!isFinite(completed)) completed = list.filter(assignmentIsCompleted).length;
+    return { unread: unread, pending: pending, completed: completed, total: Number(summary.total != null ? summary.total : list.length) || list.length };
+  }
+  function updateAssignmentIndicators() {
+    var count = Math.max(0, Number(assignmentState.unread) || 0);
+    var badge = $('itr-assignment-tab-badge');
+    if (badge) { badge.textContent = String(count); badge.style.display = count ? 'inline-flex' : 'none'; }
+    var reminder = $('itr-assignment-reminder');
+    var reminderText = $('itr-assignment-reminder-text');
+    if (reminder) {
+      var isStudent = !!(currentUser && currentUser.role === 'student');
+      reminder.classList.toggle('show', isStudent && count > 0);
+      if (reminderText) reminderText.textContent = count ? ('有 ' + count + ' 份新的题卡作业待查看') : '有新的题卡作业';
+    }
+    var summary = $('itr-assignment-summary-text');
+    if (summary) {
+      var s = assignmentState.summary || {};
+      summary.textContent = s.total ? ('共 ' + s.total + ' 份 · 未完成 ' + (s.pending || 0) + ' 份') : '暂无题卡作业';
+    }
+  }
+  function updateAssignmentSendButton(button) {
+    var btn = button || $('itr-send-assignment');
+    if (!btn) return;
+    var available = !!(currentUser && currentUser.role === 'teacher' && latestGenerated && latestGenerated.sections && latestGenerated.sections.length);
+    var selectable = getSelectableStudents ? getSelectableStudents() : [];
+    var selected = getSelectedStudentIds ? getSelectedStudentIds() : [];
+    var validSelected = selected.filter(function (id) { return selectable.some(function (s) { return String(s.id) === String(id); }); });
+    btn.disabled = !(available && selectable.length && validSelected.length);
+    btn.title = btn.disabled ? (selectable.length ? '请先选择至少一名学生' : '暂无可布置的学生') : '发送为题卡作业';
+  }
+  function assignmentQuestionPayload(sections) {
+    return (sections || []).reduce(function (all, section) {
+      return all.concat((section.questions || []).map(function (q) { return cloneData(q, {}); }));
+    }, []);
+  }
+  function openAssignmentComposer(sections) {
+    if (!currentUser || currentUser.role !== 'teacher') return;
+    var selectable = getSelectableStudents();
+    var selected = getSelectedStudentIds().filter(function (id) { return selectable.some(function (s) { return String(s.id) === String(id); }); });
+    if (!selected.length) { showToast(selectable.length ? '请先选择至少一名学生，再发送题卡作业。' : '暂无可布置作业的学生。'); return; }
+    var old = $('itr-assignment-compose'); if (old && old.parentNode) old.parentNode.removeChild(old);
+    var wrap = document.createElement('div'); wrap.id = 'itr-assignment-compose'; wrap.className = 'itr-assignment-compose';
+    var defaultTitle = '阅读题卡 · ' + new Date().toLocaleDateString('zh-CN');
+    var names = selected.map(function (id) { var s = selectable.filter(function (x) { return String(x.id) === String(id); })[0]; return s ? (s.name || s.username || s.id) : id; });
+    wrap.innerHTML = '<div style="font-weight:700;margin-bottom:10px;">发送为题卡作业</div>' +
+      '<div class="itr-row"><div class="itr-field" style="flex:2 1 240px;"><label for="itr-assignment-title">标题</label><input type="text" id="itr-assignment-title" value="' + escapeHtml(defaultTitle) + '" maxlength="120"></div>' +
+      '<div class="itr-field"><label for="itr-assignment-deadline">截止时间（可选）</label><input type="datetime-local" id="itr-assignment-deadline"></div></div>' +
+      '<div class="itr-field" style="margin-top:10px;"><label for="itr-assignment-description">说明（可选）</label><textarea id="itr-assignment-description" style="min-height:76px;" placeholder="给学生的提示或要求…"></textarea></div>' +
+      '<div class="itr-meta">发送给：' + escapeHtml(names.join('、')) + '</div>' +
+      '<div class="itr-btns"><button type="button" class="itr-btn itr-primary" id="itr-assignment-send-confirm">确认发送</button><button type="button" class="itr-btn itr-ghost" id="itr-assignment-send-cancel">取消</button></div>';
+    var anchor = $('itr-send-assignment');
+    if (anchor && anchor.parentNode) anchor.parentNode.parentNode.insertBefore(wrap, anchor.parentNode.nextSibling);
+    else $('itr-cards').insertBefore(wrap, $('itr-cards').firstChild);
+    $('itr-assignment-send-cancel').addEventListener('click', function () { wrap.remove(); });
+    $('itr-assignment-send-confirm').addEventListener('click', function () {
+      var title = $('itr-assignment-title').value.trim();
+      var description = $('itr-assignment-description').value.trim();
+      var deadlineInput = $('itr-assignment-deadline').value;
+      if (!title) { showToast('请填写作业标题。'); return; }
+      var deadline = deadlineInput ? new Date(deadlineInput).toISOString() : null;
+      var questions = assignmentQuestionPayload(sections);
+      var payload = {
+        title: title, description: description, dueAt: deadline, deadline: deadline,
+        studentIds: selected, student_ids: selected,
+        questions: questions,
+        sections: cloneData(sections, []),
+        source: { type: 'reading-trainer', level: latestGenerated && latestGenerated.level, exam: latestGenerated && latestGenerated.exam }
+      };
+      var send = $('itr-assignment-send-confirm'); send.disabled = true; send.classList.add('itr-busy');
+      apiV2('/assignments', { method: 'POST', body: JSON.stringify(payload) }).then(function (res) {
+        wrap.remove(); showToast('题卡作业已发送给 ' + selected.length + ' 名学生。');
+        refreshAssignmentSummary();
+      }).catch(function (err) {
+        send.disabled = false; send.classList.remove('itr-busy'); showToast('发送作业失败：' + err.message);
+      });
+    });
+  }
+  function renderAssignmentCard(a) {
+    var id = assignmentId(a); if (id == null) return '';
+    var done = assignmentIsCompleted(a), fresh = assignmentIsNew(a);
+    var statusText = done ? '已完成' : (fresh ? '新作业' : '未完成');
+    var statusClass = done ? 'done' : (fresh ? 'new' : '');
+    var due = assignmentDeadline(a);
+    var meta = [];
+    if (due) meta.push('截止：' + assignmentDate(due));
+    if (a.createdAt || a.created_at) meta.push('发布：' + assignmentDate(a.createdAt || a.created_at));
+    var html = '<article class="itr-assignment-card ' + (fresh && !done ? 'new' : '') + '" data-assignment-id="' + escapeHtml(id) + '">' +
+      '<div class="itr-assignment-card-head"><h4>' + escapeHtml(assignmentTitle(a)) + '</h4><span class="itr-assignment-status ' + statusClass + '">' + statusText + '</span></div>';
+    if (meta.length) html += '<div class="itr-assignment-meta">' + escapeHtml(meta.join(' · ')) + '</div>';
+    var desc = assignmentDescription(a); if (desc) html += '<div class="itr-assignment-desc">' + escapeHtml(desc) + '</div>';
+    html += '<div class="itr-assignment-actions"><button type="button" class="itr-btn ' + (done ? 'itr-ghost' : 'itr-primary') + '" data-assignment-open="' + escapeHtml(id) + '">' + (done ? '查看结果' : '打开并答题') + '</button></div></article>';
+    return html;
+  }
+  function renderAssignmentsPane() {
+    var listEl = $('itr-assignment-list'); if (!listEl) return;
+    var filter = assignmentState.filter || 'all';
+    var list = (assignmentState.list || []).filter(function (a) {
+      if (filter === 'new') return assignmentIsNew(a) && !assignmentIsCompleted(a);
+      if (filter === 'pending') return !assignmentIsCompleted(a);
+      if (filter === 'completed') return assignmentIsCompleted(a);
+      return true;
+    });
+    listEl.innerHTML = list.length ? list.map(renderAssignmentCard).join('') : '<div class="itr-book-empty">' + (assignmentState.loading ? '正在读取作业…' : '暂无符合条件的题卡作业。') + '</div>';
+    listEl.querySelectorAll('[data-assignment-open]').forEach(function (button) {
+      button.addEventListener('click', function () { openAssignment(button.getAttribute('data-assignment-open')); });
+    });
+    updateAssignmentIndicators();
+  }
+  function refreshAssignmentSummary(options) {
+    if (!currentUser || !currentUser.id) return Promise.resolve(null);
+    assignmentState.loading = true; renderAssignmentsPane();
+    return apiV2('/assignments?summary=1').then(function (res) {
+      var list = assignmentListFromResponse(res);
+      if (list.length || Array.isArray(res && res.assignments) || Array.isArray(res && res.items)) assignmentState.list = list;
+      assignmentState.summary = assignmentSummaryFromResponse(res, assignmentState.list || []);
+      assignmentState.unread = assignmentState.summary.unread;
+      assignmentState.loading = false;
+      renderAssignmentsPane();
+      return res;
+    }).catch(function (err) {
+      assignmentState.loading = false;
+      if (options && options.showError && currentTab === 'assignments') showToast('读取题卡作业失败：' + err.message);
+      renderAssignmentsPane();
+      return null;
+    });
+  }
+  function assignmentRawAnswerText(value) {
+    if (value == null || value === "" || (Array.isArray(value) && !value.length)) return "（未作答）";
+    if (Array.isArray(value)) return value.map(assignmentRawAnswerText).join("；");
+    if (typeof value === "object") {
+      return Object.keys(value).map(function (key) { return key + " → " + assignmentRawAnswerText(value[key]); }).join("；");
+    }
+    return String(value);
+  }
+  function assignmentBreakdownEntries(data) {
+    if (Array.isArray(data)) return data;
+    if (!data || typeof data !== "object") return [];
+    return Object.keys(data).map(function (key) {
+      var value = data[key];
+      if (typeof value === "number") return { label: key, right: value, total: 0, pct: 0 };
+      return Object.assign({ label: key }, value || {});
+    });
+  }
+  function renderAssignmentResult(answerEl, response, detail) {
+    var result = assignmentResponseResult(response);
+    // Reuse the exact report builder used by ordinary practice.  Assignment
+    // records are adapted to the practice record shape, then rendered by the
+    // same template so layout, labels, advice and wrong-book hints stay in
+    // lockstep.
+    var sharedQuestions = assignmentQuestions(detail || {}).map(normalizeAssignmentQuestion);
+    var sharedQuestionMap = {};
+    sharedQuestions.forEach(function (q, i) { sharedQuestionMap[String(q.id != null ? q.id : i + 1)] = q; });
+    var sharedSections = detail && Array.isArray(detail.sections) ? detail.sections : [];
+    var sharedSectionMap = {};
+    sharedSections.forEach(function (section, sectionIndex) {
+      (section && Array.isArray(section.questions) ? section.questions : []).forEach(function (raw, questionIndex) {
+        var normalized = normalizeAssignmentQuestion(raw, questionIndex);
+        sharedSectionMap[String(normalized.id)] = sectionIndex;
+      });
+    });
+    var sharedRecords = (Array.isArray(result.records) ? result.records : []).map(function (record, i) {
+      var id = String(record.questionId != null ? record.questionId : (record.id != null ? record.id : i + 1));
+      var q = sharedQuestionMap[id] || {};
+      if (record.correctAnswer != null && q.answer == null) q.answer = q.type === 'headings' ? normalizeHeadingAnswer(record.correctAnswer) : record.correctAnswer;
+      if (record.explanation != null) q.explanation = record.explanation;
+      var answered = record.answered != null ? !!record.answered : !(record.userAnswer == null || record.userAnswer === "" || (Array.isArray(record.userAnswer) && !record.userAnswer.length));
+      return { sec: sharedSectionMap[id] || 0, q: q, correct: record.correct === true, user: assignmentRawAnswerText(record.userAnswer), answered: answered };
+    });
+    var sharedTotal = result.total != null ? result.total : sharedRecords.length;
+    var sharedRight = result.right != null ? result.right : sharedRecords.filter(function (r) { return r.correct; }).length;
+    var sharedUnanswered = result.unanswered != null ? result.unanswered : sharedRecords.filter(function (r) { return !r.answered; }).length;
+    var sharedPct = result.pct != null ? result.pct : (sharedTotal ? Math.round(sharedRight / sharedTotal * 100) : 0);
+    var sharedByType = {}, sharedByExam = {};
+    sharedRecords.forEach(function (record) {
+      var type = record.q.type || "unknown", exam = record.q.exam || "—";
+      sharedByType[type] = sharedByType[type] || { right: 0, total: 0 };
+      sharedByExam[exam] = sharedByExam[exam] || { right: 0, total: 0 };
+      sharedByType[type].total++; sharedByExam[exam].total++;
+      if (record.correct) { sharedByType[type].right++; sharedByExam[exam].right++; }
+    });
+    var sharedByArt = [];
+    if (sharedSections.length) {
+      sharedSections.forEach(function (_, sectionIndex) {
+        var sectionRecords = sharedRecords.filter(function (record) { return record.sec === sectionIndex; });
+        sharedByArt.push({ right: sectionRecords.filter(function (record) { return record.correct; }).length, total: sectionRecords.length });
+      });
+    } else if (sharedRecords.length) {
+      sharedByArt.push({ right: sharedRight, total: sharedTotal });
+    }
+    var sharedStuLabel = currentUser ? ((currentUser.username || '学生') + '（' + currentUser.id + '）') : '';
+    var sharedHtml = buildPracticeReportMarkup({ records: sharedRecords, total: sharedTotal, right: sharedRight, unanswered: sharedUnanswered, pct: sharedPct, byType: sharedByType, byArt: sharedByArt, byExam: sharedByExam, wrongs: sharedRecords.filter(function (r) { return !r.correct; }), stuLabel: sharedStuLabel });
+    var sharedOld = answerEl.querySelector('.itr-assignment-report'); if (sharedOld) sharedOld.remove();
+    answerEl.insertAdjacentHTML('beforeend', sharedHtml.replace('class="itr-report"', 'class="itr-assignment-report itr-report"'));
+    return;
+  }
+  function collectAssignmentAnswer(card, q) {
+    var type = normType(q.type);
+    if (type === 'multiple-choice' || type === 'vocabulary') {
+      var opt = card.querySelector('.itr-opt.sel'); return opt ? opt.getAttribute('data-label') : '';
+    }
+    if (type === 'true-false-notgiven') { var tf = card.querySelector('.itr-tfng button.sel'); return tf ? tf.getAttribute('data-label') : ''; }
+    if (type === 'fill-blank') { var inp = card.querySelector('.itr-fib input'); return inp ? inp.value.trim() : ''; }
+    if (type === 'matching') return Array.prototype.map.call(card.querySelectorAll('.itr-match-row select'), function (s) { return s.value; });
+    if (type === 'headings') return Array.prototype.map.call(card.querySelectorAll('.itr-hd-row select'), function (s) { return s.value; });
+    if (type === 'sentence-end') { var out = {}; card.querySelectorAll('.itr-send-row select').forEach(function (s) { out[s.getAttribute('data-id')] = s.value; }); return out; }
+    if (type === 'diagram') return Array.prototype.map.call(card.querySelectorAll('.itr-dia-inp'), function (i) { return i.value.trim(); });
+    return getUserAnswer(card, q).text;
+  }
+  function assignmentRecordForQuestion(result, q, index) {
+    var records = result && Array.isArray(result.records) ? result.records : [];
+    var id = String(q && q.id != null ? q.id : index + 1);
+    return records.filter(function (record) { return String(record.questionId != null ? record.questionId : record.id) === id; })[0] || null;
+  }
+  function setAssignmentAnswer(card, q, value) {
+    if (value == null) return;
+    var type = normType(q.type);
+    if (type === 'multiple-choice' || type === 'vocabulary') {
+      card.querySelectorAll('.itr-opt').forEach(function (opt) { opt.classList.toggle('sel', String(opt.getAttribute('data-label')) === String(value)); });
+    } else if (type === 'true-false-notgiven') {
+      card.querySelectorAll('.itr-tfng button').forEach(function (button) { button.classList.toggle('sel', String(button.getAttribute('data-label')) === String(value)); });
+    } else if (type === 'fill-blank') {
+      var fill = card.querySelector('.itr-fib input'); if (fill) fill.value = String(value);
+    } else if (type === 'matching' || type === 'headings') {
+      var values = Array.isArray(value) ? value : [];
+      card.querySelectorAll('select').forEach(function (select, i) { select.value = headingOptionValue(values[i]); });
+    } else if (type === 'sentence-end') {
+      var map = value && typeof value === 'object' ? value : {};
+      card.querySelectorAll('.itr-send-row select').forEach(function (select) { select.value = map[select.getAttribute('data-id')] || ''; });
+    } else if (type === 'diagram') {
+      var inputs = Array.isArray(value) ? value : [];
+      card.querySelectorAll('.itr-dia-inp').forEach(function (input, i) { input.value = inputs[i] == null ? '' : String(inputs[i]); });
+    }
+  }
+  function prepareCompletedAssignmentCards(cards, questions, result, detail) {
+    var savedQuestions = assignmentQuestions(detail || {}).map(normalizeAssignmentQuestion);
+    cards.forEach(function (card, i) {
+      var q = questions[i];
+      var saved = savedQuestions.filter(function (item) { return String(item.id) === String(q.id); })[0];
+      var record = assignmentRecordForQuestion(result, q, i);
+      if (saved && saved.answer != null) q.answer = saved.answer;
+      if (saved && saved.explanation) q.explanation = saved.explanation;
+      if (record && record.correctAnswer != null) q.answer = q.type === 'headings' ? normalizeHeadingAnswer(record.correctAnswer) : record.correctAnswer;
+      if (record && record.explanation) q.explanation = record.explanation;
+      if (record && record.userAnswer != null) setAssignmentAnswer(card, q, record.userAnswer);
+      if (q.answer != null) checkQuestion(card, q);
+      renderAssignmentQuestionFeedback(card, q, { correct: record ? record.correct : undefined, explanation: q.explanation });
+    });
+  }
+  function submitAssignmentAnswers(detail, cards, questions, answerEl) {
+    var id = assignmentId(detail); if (id == null) return;
+    var answers = {};
+    questions.forEach(function (q, i) { answers[String(q.id != null ? q.id : i + 1)] = collectAssignmentAnswer(cards[i], q); });
+    var button = answerEl.querySelector('#itr-assignment-submit'); if (button) { button.disabled = true; button.classList.add('itr-busy'); }
+    apiV2(assignmentPath(id, '/submit'), { method: 'POST', body: JSON.stringify({ assignmentId: id, answers: answers, responses: answers }) }).then(function (res) {
+      var submitted = assignmentObjectFromResponse(res) || {};
+      var result = assignmentResponseResult(res);
+      var merged = Object.assign({}, detail, submitted, { id: id, status: 'submitted', completed: true, result: result });
+      var savedQuestions = assignmentQuestions(submitted).map(normalizeAssignmentQuestion);
+      savedQuestions.forEach(function (saved) {
+        var q = questions.filter(function (item) { return String(item.id) === String(saved.id); })[0];
+        if (q) { if (saved.answer != null) q.answer = saved.answer; if (saved.explanation) q.explanation = saved.explanation; }
+      });
+      cards.forEach(function (card, i) {
+        var record = assignmentRecordForQuestion(result, questions[i], i);
+        if (record && record.userAnswer != null) setAssignmentAnswer(card, questions[i], record.userAnswer);
+        if (record && record.correctAnswer != null) questions[i].answer = questions[i].type === 'headings' ? normalizeHeadingAnswer(record.correctAnswer) : record.correctAnswer;
+        if (record && record.explanation) questions[i].explanation = record.explanation;
+        if (questions[i].answer != null) checkQuestion(card, questions[i]);
+        renderAssignmentQuestionFeedback(card, questions[i], { correct: record ? record.correct : undefined, explanation: questions[i].explanation });
+      });
+      if (button) { button.disabled = true; button.classList.remove('itr-busy'); button.textContent = '已提交'; }
+      assignmentState.list = (assignmentState.list || []).map(function (a) { return String(assignmentId(a)) === String(id) ? Object.assign({}, a, { status: 'completed', completed: true }) : a; });
+      assignmentState.active = merged;
+      renderAssignmentResult(answerEl, result, merged); refreshAssignmentSummary();
+      showToast('作业提交成功。');
+    }).catch(function (err) {
+      if (button) { button.disabled = false; button.classList.remove('itr-busy'); }
+      showToast('提交作业失败：' + err.message);
+    });
+  }
+  function renderAssignmentAnswer(detail) {
+    var answerEl = $('itr-assignment-answer'); if (!answerEl) return;
+    var questions = assignmentQuestions(detail).map(normalizeAssignmentQuestion);
+    answerEl.style.display = 'block';
+    var title = assignmentTitle(detail);
+    var sectionArticles = Array.isArray(detail.sections) ? detail.sections.map(function (section) {
+      return section && (section.article || section.passage || section.text || '');
+    }).filter(Boolean) : [];
+    var article = detail.article || detail.passage || detail.text || sectionArticles.join('\n\n');
+    var html = '<div class="itr-book-head"><h3 style="margin:0;">' + escapeHtml(title) + '</h3><span class="spacer"></span><button type="button" class="itr-link" id="itr-assignment-close">返回作业列表</button></div>';
+    if (article) html += '<div class="itr-card" style="margin-top:12px;"><label>原文</label>' + renderArticle(String(article)) + '</div>';
+    if (!questions.length) html += '<div class="itr-book-empty">该作业暂未返回可答题内容，请刷新后重试。</div>';
+    html += '<div class="itr-assignment-question-list">' + questions.map(function (q) { return renderQuestion(q, { assignment: true }); }).join('') + '</div>';
+    if (questions.length && !assignmentIsCompleted(detail)) html += '<div class="itr-btns"><button type="button" class="itr-btn itr-primary" id="itr-assignment-submit">提交批改与分析</button></div>';
+    answerEl.innerHTML = html;
+    answerEl.querySelector('#itr-assignment-close').addEventListener('click', function () { answerEl.style.display = 'none'; assignmentState.active = null; });
+    var cards = Array.prototype.slice.call(answerEl.querySelectorAll('.itr-q'));
+    cards.forEach(function (card, i) { bindQuestion(card, questions[i], { assignmentId: assignmentId(detail) }); });
+    if (assignmentIsCompleted(detail)) {
+      var completedResult = assignmentResponseResult(detail.result || detail);
+      prepareCompletedAssignmentCards(cards, questions, completedResult, detail);
+      renderAssignmentResult(answerEl, completedResult, detail);
+    }
+    var submit = answerEl.querySelector('#itr-assignment-submit');
+    if (submit) submit.addEventListener('click', function () { submitAssignmentAnswers(detail, cards, questions, answerEl); });
+    answerEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function openAssignment(id) {
+    if (id == null) return;
+    var answerEl = $('itr-assignment-answer');
+    if (answerEl) { answerEl.style.display = 'block'; answerEl.innerHTML = '<div class="itr-status"><span class="itr-spinner"></span>正在打开作业…</div>'; }
+    var openResult = null;
+    return apiV2(assignmentPath(id, '/open'), { method: 'POST', body: '{}' }).catch(function () { return null; }).then(function (opened) {
+      openResult = assignmentObjectFromResponse(opened);
+      return apiV2(assignmentPath(id));
+    }).catch(function (err) {
+      if (openResult) return openResult;
+      throw err;
+    }).then(function (res) {
+      var detail = assignmentObjectFromResponse(res) || openResult || (assignmentState.list || []).filter(function (a) { return String(assignmentId(a)) === String(id); })[0];
+      if (!detail) throw new Error('作业不存在或已被删除');
+      detail = Object.assign({}, detail, { id: assignmentId(detail) || id });
+      assignmentState.active = detail;
+      assignmentState.list = (assignmentState.list || []).map(function (a) { return String(assignmentId(a)) === String(id) ? Object.assign({}, a, detail, { read: true, unread: false, isNew: false }) : a; });
+      assignmentState.unread = assignmentState.list.filter(assignmentIsNew).length;
+      renderAssignmentsPane(); renderAssignmentAnswer(detail);
+    }).catch(function (err) {
+      if (answerEl) answerEl.innerHTML = '<div class="itr-status err">打开作业失败：' + escapeHtml(err.message) + '</div>';
+    });
+  }
+  function startAssignmentRefresh() {
+    if (assignmentRefreshTimer) return;
+    assignmentRefreshTimer = window.setInterval(function () { if (currentUser) refreshAssignmentSummary(); }, 60000);
+  }
+  window.addEventListener('focus', function () { if (currentUser) refreshAssignmentSummary(); });
+  startAssignmentRefresh();
 
   // ---------- Vocabulary extraction ----------
   function splitSentences(t) {
@@ -3762,6 +4471,44 @@
     if(currentUser && currentUser.role==='teacher') return getStudentsByTeacher(currentUser.id).map(function(a){ return {id:a.id, name:a.username||a.name, classId:a.classId}; });
     return getStudents();
   }
+  function getStudentMembership(student) {
+    if (!student) return {};
+    var source = serverState.membership || serverState.memberships || {};
+    var value = null;
+    if (Array.isArray(source)) {
+      value = source.filter(function (m) {
+        return m && (m.studentId === student.id || m.student_id === student.id || m.userId === student.id || m.user_id === student.id || m.id === student.id);
+      })[0] || null;
+    } else if (source && typeof source === 'object') {
+      value = source[student.id] || source[String(student.id)] || ((source.classId != null || source.className != null || source.teacherName != null) ? source : null);
+    }
+    if ((!value || typeof value !== 'object') && student.membership && typeof student.membership === 'object') value = student.membership;
+    value = value && typeof value === 'object' ? value : {};
+    var account = getAccountById(student.id) || {};
+    var merged = Object.assign({}, account, student, value);
+    var classId = merged.classId || merged.class_id || merged.classID || (merged.class && (merged.class.id || merged.class.classId));
+    var cls = (merged.class && typeof merged.class === 'object') ? merged.class : (classId ? getClassById(classId) : null);
+    var teacherId = merged.teacherId || merged.teacher_id || merged.teacherID || merged.created_by || merged.createdBy || (cls && (cls.teacherId || cls.teacher_id));
+    var teacher = merged.teacher && typeof merged.teacher === 'object' ? merged.teacher : (teacherId ? getAccountById(teacherId) : null);
+    return {
+      classId: classId || '',
+      className: merged.className || merged.class_name || merged.classname || (cls && (cls.name || cls.title)) || '',
+      teacherId: teacherId || '',
+      teacherName: merged.teacherName || merged.teacher_name || merged.teacherUsername || merged.teacher_username || (teacher && (teacher.username || teacher.name)) || ''
+    };
+  }
+  function renderStudentContext() {
+    var context = $('itr-student-context');
+    if (!context) return;
+    if (!currentUser || currentUser.role !== 'student') {
+      context.style.display = 'none'; context.innerHTML = ''; return;
+    }
+    var info = getStudentMembership(currentUser);
+    var className = info.className || '暂未分配';
+    var teacherName = info.teacherName || '暂未分配';
+    context.innerHTML = '<span><b>所在班级：</b>' + escapeHtml(className) + '</span><span style="margin-left:18px;"><b>所属老师：</b>' + escapeHtml(teacherName) + '</span>';
+    context.style.display = 'block';
+  }
   function getTargetStudentIds(){
     var sel=getSelectedStudentIds();
     if(sel.length) return sel;
@@ -3772,20 +4519,37 @@
     var sel=getSelectedStudentIds(); var idx=sel.indexOf(id);
     if(checked && idx===-1) sel.push(id);
     if(!checked && idx!==-1) sel.splice(idx,1);
-    saveSelectedStudentIds(sel); buildStudentSelect();
+    saveSelectedStudentIds(sel); buildStudentSelect(); updateAssignmentSendButton();
   }
   function selectAllStudents(){
-    var list=getSelectableStudents(); saveSelectedStudentIds(list.map(function(s){return s.id;})); buildStudentSelect();
+    var list=getSelectableStudents(); saveSelectedStudentIds(list.map(function(s){return s.id;})); buildStudentSelect(); updateAssignmentSendButton();
   }
-  function clearSelectedStudents(){ saveSelectedStudentIds([]); buildStudentSelect(); }
+  function clearSelectedStudents(){ saveSelectedStudentIds([]); buildStudentSelect(); updateAssignmentSendButton(); }
   function buildStudentSelect() {
     var box=$("itr-student-selector"); if(!box) return;
-    if(!currentUser){ box.innerHTML=''; var hint=$('itr-stu-hint'); if(hint) hint.textContent=''; return; }
+    var label = $('itr-student-select-label');
+    var allBtn = $('itr-stu-all');
+    var clearBtn = $('itr-stu-clear');
+    if(!currentUser){
+      box.innerHTML=''; box.style.display=''; if (label) label.style.display=''; if (allBtn) allBtn.style.display=''; if (clearBtn) clearBtn.style.display='';
+      renderStudentContext();
+      var hint=$('itr-stu-hint'); if(hint) hint.textContent=''; return;
+    }
     var list=getSelectableStudents(); var selected=getSelectedStudentIds();
     if(currentUser && currentUser.role==='student'){
-      box.innerHTML='<div class="itr-stu-selected-tag">当前学生：'+escapeHtml(currentUser.username)+'</div>';
+      box.innerHTML=''; box.style.display='none';
+      if (label) label.style.display='none';
+      if (allBtn) allBtn.style.display='none';
+      if (clearBtn) clearBtn.style.display='none';
+      renderStudentContext();
+      var studentHint = $('itr-stu-hint'); if (studentHint) studentHint.textContent = '普通练习与成绩仅记录到你的账号。题卡作业请在「题卡作业」中完成。';
       saveSelectedStudentIds([currentUser.id]); return;
     }
+    if (label) label.style.display='';
+    if (allBtn) allBtn.style.display='';
+    if (clearBtn) clearBtn.style.display='';
+    box.style.display='';
+    renderStudentContext();
     if(!list.length){ box.innerHTML='<div class="itr-stu-empty">暂无学生。可在「教师中心」生成邀请码让学生注册，或由管理员把学生分配到您的班级。</div>'; return; }
     var classes=getClassesByTeacher(currentUser.id);
     var grouped={'__none__':[]}; classes.forEach(function(c){grouped[c.id]=[];});
@@ -4117,6 +4881,18 @@
     var t=e.target; if(!t || !t.matches || !t.matches('input[type="checkbox"][data-stu-id]')) return;
     toggleSelectedStudentId(t.getAttribute('data-stu-id'), t.checked);
   });
+  var assignmentReminderBtn = $("itr-assignment-reminder-open");
+  if (assignmentReminderBtn) assignmentReminderBtn.addEventListener("click", function () { switchTab("assignments"); });
+  var assignmentRefreshBtn = $("itr-assignment-refresh");
+  if (assignmentRefreshBtn) assignmentRefreshBtn.addEventListener("click", function () { refreshAssignmentSummary({ showError: true }); });
+  var assignmentFilters = $("itr-assignment-filters");
+  if (assignmentFilters) assignmentFilters.addEventListener("click", function (e) {
+    var button = e.target && e.target.closest ? e.target.closest('[data-assignment-filter]') : null;
+    if (!button) return;
+    assignmentState.filter = button.getAttribute('data-assignment-filter') || 'all';
+    assignmentFilters.querySelectorAll('[data-assignment-filter]').forEach(function (b) { b.classList.toggle('active', b === button); });
+    renderAssignmentsPane();
+  });
 
   // new feature buttons
   $("itr-theme-btn").addEventListener("click", function () {
@@ -4236,6 +5012,7 @@
       { pane: "wbook", label: ICONS.clip + " 错题复习" },
       { pane: "grades", label: ICONS.trend + " 成绩档案" }
     ];
+    if (currentRole === "student") defs.splice(1, 0, { pane: "assignments", label: ICONS.clip + ' 题卡作业 <span class="itr-assignment-unread" id="itr-assignment-tab-badge" style="display:none;">0</span>' });
     if (currentRole === "teacher") defs.push({ pane: "teacher", label: ICONS.teacher + " 教师中心" });
     defs.forEach(function (t) {
       var b = document.createElement("button");
@@ -4254,6 +5031,7 @@
     else if (name === "vbook") renderVBook();
     else if (name === "wbook") renderWBook();
     else if (name === "grades") renderStats();
+    else if (name === "assignments") { renderAssignmentsPane(); refreshAssignmentSummary(); }
     else if (name === "practice") { if (typeof buildStudentSelect === 'function') buildStudentSelect(); }
   }
   function setRole(role) {
@@ -4263,7 +5041,7 @@
     if (tabs) tabs.style.display = "flex";
     var badge = $("itr-role-badge");
     if (badge) { badge.textContent = role === "teacher" ? "教师版" : ""; badge.classList.toggle("show", role === "teacher"); }
-    buildTabs(); switchTab("practice");
+    buildTabs(); switchTab("practice"); refreshAssignmentSummary();
   }
   
   function hideRoleGate() {
@@ -4474,7 +5252,7 @@ function showRoleGate() {
     return apiV2('/auth/login', {method:'POST', body:JSON.stringify({username:user,password:pass,role:role})})
       .then(function(res){
         document.getElementById('itr-auth-pass').value='';
-        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData();
+        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData(); refreshAssignmentSummary();
         showToast('欢迎回来，' + user + '！' + (role==='teacher' ? '（教师模式）' : '（学生模式）'));
       }).catch(function(err){ errEl.textContent=err.message; });
   }
@@ -4493,7 +5271,7 @@ function showRoleGate() {
     return apiV2('/auth/register', {method:'POST', body:JSON.stringify({username:user,password:pass,role:role,code:code})})
       .then(function(res){
         document.getElementById('itr-reg-pass').value='';
-        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData(); syncAllToFeishu();
+        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData(); syncAllToFeishu(); refreshAssignmentSummary();
         showToast('注册成功！欢迎，' + user + (role==='teacher' ? ' 老师' : '同学'));
       }).catch(function(err){ errEl.textContent=err.message; });
   }
@@ -4504,6 +5282,7 @@ function showRoleGate() {
     showAuthGate(true);
     $('itr-cards').innerHTML = '';
     $('itr-worksheet').innerHTML = '';
+    assignmentState.list = []; assignmentState.active = null; assignmentState.summary = {}; assignmentState.unread = 0; updateAssignmentIndicators();
     apiV2('/auth/logout', {method:'POST', body:'{}'}).catch(function(){});
   }
 
@@ -5080,7 +5859,7 @@ function showRoleGate() {
     return apiV2('/bootstrap').then(function(res){
       applyServerState(res.state); serverAdmin=!!res.admin; setSession(res.user || null);
       uiMemory.settings=cloneData(loadSettingsRaw(),{});
-      loadSettings(); initTheme(); initRole(); migrateLegacyBrowserData();
+      loadSettings(); initTheme(); initRole(); migrateLegacyBrowserData(); refreshAssignmentSummary();
       if (serverAdmin && getParam('feishu_oauth') === 'success') { hideAdminGate(); showAdminPanel(); renderAdmin('feishu'); }
     }).catch(function(err){
       clearSession(); showAuthGate(true); hideRoleGate();

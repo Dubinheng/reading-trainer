@@ -25,7 +25,7 @@ flowchart LR
 - 文件：腾讯服务器 `/home/ubuntu/resume-screener/reading_trainer.db`
 - 与原项目 `resumes.db` 完全隔离。
 - 数据库权限设置为 `600`。
-- 存储账号密码哈希、会话哈希、邀请码、班级、学习设置、收藏、生词、错题、成绩和文章库。
+- 存储账号密码哈希、会话哈希、邀请码、班级、学习设置、收藏、生词、错题、成绩、文章库，以及教师布置的题卡作业和每名学生的作业接收/提交记录。
 - 密码使用带随机盐的 PBKDF2-SHA256；旧 SHA-256 哈希仅用于迁移兼容。
 - 登录状态使用 HttpOnly、Secure、SameSite=Lax Cookie，浏览器脚本不能读取会话令牌。
 
@@ -36,6 +36,8 @@ flowchart LR
 - 每条记录增加 `业务键`、`数据类型`、`数据JSON`，便于幂等核对和保留完整业务结构。
 - 不同步管理员账号，也不写入密码、密码哈希、API Key、OAuth Token、Cookie 或会话。
 - 文章库和收藏可共用一张飞书表，通过 `数据类型` 区分。
+- 题卡作业使用 `assignments`、`assignment_recipients` 与 `assignment_question_checks` 三张服务器表；稳定业务键分别为 `assignments:<作业ID>` 和 `assignments:<作业ID>:<学生ID>`，逐题核对以作业/学生/题目三元键幂等保存。学生提交前只返回去除答案键的题卡，答案和判题结果留在服务器。
+- 飞书作业表通过 `FEISHU_TABLE_ASSIGNMENTS` 配置后启用；未配置时不影响腾讯服务器主库，仍保持幂等、非破坏同步规则。
 
 ## 权限范围
 
