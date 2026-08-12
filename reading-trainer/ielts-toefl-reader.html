@@ -5691,7 +5691,12 @@
     var allRecords = getGrades(ownerId), records = diagnosisFilteredRecords(allRecords), state = studentDiagnosisState;
     var readonly = !!options.readonly;
     var title = readonly ? ('教师查看 · ' + (owner.username || owner.name || ownerId || '学生') + ' 的成绩档案') : '学生个人诊断';
-    var html = '<div class="itr-diag-shell"><div class="itr-stats-head"><div><h3>' + ICONS.trend + ' ' + escapeHtml(title) + '</h3><div class="itr-stu-hint">先看是否进步，再看哪里薄弱，最后给出下一步训练方向。</div></div><span class="spacer"></span>' + (readonly ? '' : '<button type="button" class="itr-btn-sm" id="itr-stats-export">' + ICONS.down + ' 导出 PDF</button><button type="button" class="itr-link" id="itr-stats-close">收起</button>') + '</div>';
+    // The teacher view is read-only, but it must expose the same report export
+    // as the student's archive. Keeping this button in the shared renderer
+    // means future report content/layout changes stay in sync on both sides.
+    var exportLabel = readonly ? '导出该学生 PDF' : '导出 PDF';
+    var exportButton = '<button type="button" class="itr-btn-sm" id="itr-stats-export" title="使用学生成绩档案同款报告">' + ICONS.down + ' ' + exportLabel + '</button>';
+    var html = '<div class="itr-diag-shell"><div class="itr-stats-head"><div><h3>' + ICONS.trend + ' ' + escapeHtml(title) + '</h3><div class="itr-stu-hint">先看是否进步，再看哪里薄弱，最后给出下一步训练方向。</div></div><span class="spacer"></span>' + exportButton + (readonly ? '' : '<button type="button" class="itr-link" id="itr-stats-close">收起</button>') + '</div>';
     html += '<div class="itr-diag-filter"><span class="itr-diag-filter-label">时间</span><div class="itr-diag-seg">' + [['last10','近 10 次'],['30days','近 30 天'],['all','全部']].map(function (item) { return '<button type="button" data-diag-period="' + item[0] + '" class="' + (state.period === item[0] ? 'active' : '') + '">' + item[1] + '</button>'; }).join('') + '</div>';
     html += '<span class="itr-diag-filter-label">来源</span><select id="itr-diag-source"><option value="all">全部来源</option><option value="practice"' + (state.source === 'practice' ? ' selected' : '') + '>普通练习</option><option value="assignment"' + (state.source === 'assignment' ? ' selected' : '') + '>题卡作业</option></select>';
     html += '<span class="itr-diag-filter-label">考试</span><select id="itr-diag-exam"><option value="all">IELTS + TOEFL</option><option value="IELTS"' + (state.exam === 'IELTS' ? ' selected' : '') + '>IELTS</option><option value="TOEFL"' + (state.exam === 'TOEFL' ? ' selected' : '') + '>TOEFL</option></select>';

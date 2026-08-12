@@ -245,6 +245,8 @@ def test_student_personal_diagnosis_uses_shared_grade_dimensions():
     assert "source: 'practice'" in grade_source
     assert "byType: cloneData(byType" in grade_source
     assert "byExam: cloneData(examDetail" in grade_source
+    assert "导出该学生 PDF" in diagnosis_source
+    assert "exportScorePDF(ownerId)" in diagnosis_source
 
 
 def test_teacher_invites_are_removed_and_admin_usage_report_is_present():
