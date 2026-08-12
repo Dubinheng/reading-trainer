@@ -316,6 +316,17 @@ class ReadingTrainerStore:
                     last_seen INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+                CREATE TABLE IF NOT EXISTS usage_events (
+                    event_id TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    event_type TEXT NOT NULL,
+                    event_date TEXT NOT NULL,
+                    duration_ms INTEGER,
+                    meta_json TEXT NOT NULL DEFAULT '{}',
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_usage_events_created ON usage_events(created_at);
+                CREATE INDEX IF NOT EXISTS idx_usage_events_type_date ON usage_events(event_type, event_date);
                 CREATE TABLE IF NOT EXISTS invites (
                     code TEXT PRIMARY KEY,
                     role TEXT NOT NULL,
@@ -1180,6 +1191,167 @@ class ReadingTrainerStore:
                 "UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, token_hash)
             )
         return self.get_user(str(row[0]))
+
+    def record_usage_event(
+        self,
+        user_id: str | None,
+        event_type: str,
+        metadata: Mapping[str, Any] | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        """Persist a privacy-safe product-usage event for the admin dashboard.
+
+        Only aggregate-safe metadata is accepted; request bodies, answer text,
+        prompts and credentials are deliberately not recorded.
+        """
+        event_type = re.sub(r"[^a-z0-9_.-]", "_", str(event_type or "event").lower())[:80] or "event"
+        clean_meta: dict[str, Any] = {}
+        if isinstance(metadata, Mapping):
+            for key, value in metadata.items():
+                key_text = re.sub(r"[^a-zA-Z0-9_.-]", "_", str(key))[:50]
+                if not key_text or _is_sensitive_key(key_text):
+                    continue
+                if isinstance(value, bool):
+                    clean_meta[key_text] = value
+                elif isinstance(value, (int, float)) and math.isfinite(float(value)):
+                    clean_meta[key_text] = int(value)
+                elif isinstance(value, str) and len(value) <= 120:
+                    clean_meta[key_text] = value
+        now = _now()
+        event_date = datetime.fromtimestamp(now, timezone.utc).date().isoformat()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO usage_events(event_id,user_id,event_type,event_date,duration_ms,meta_json,created_at) VALUES (?,?,?,?,?,?,?)",
+                (
+                    "ue_" + uuid.uuid4().hex,
+                    _safe_text(user_id, 200) or None,
+                    event_type,
+                    event_date,
+                    max(0, int(duration_ms)) if duration_ms is not None else None,
+                    _json_dumps(clean_meta),
+                    now,
+                ),
+            )
+
+    def usage_summary(self, days: int = 30) -> dict[str, Any]:
+        """Return aggregate platform usage without exposing user content."""
+        days = max(7, min(int(days or 30), 365))
+        now = _now()
+        cutoff = now - days * 86400
+        with self.connect() as connection:
+            event_rows = connection.execute(
+                "SELECT event_type, COUNT(*) AS n, COUNT(DISTINCT user_id) AS users, "
+                "AVG(duration_ms) AS avg_duration FROM usage_events WHERE created_at >= ? GROUP BY event_type",
+                (cutoff,),
+            ).fetchall()
+            daily_rows = connection.execute(
+                "SELECT event_date, COUNT(*) AS events, COUNT(DISTINCT user_id) AS active_users "
+                "FROM usage_events WHERE created_at >= ? GROUP BY event_date ORDER BY event_date",
+                (cutoff,),
+            ).fetchall()
+            event_meta_rows = connection.execute(
+                "SELECT event_type, meta_json FROM usage_events WHERE created_at >= ?",
+                (cutoff,),
+            ).fetchall()
+            user_rows = connection.execute("SELECT role, COUNT(*) AS n FROM users GROUP BY role").fetchall()
+            assignment_total = connection.execute("SELECT COUNT(*) FROM assignments").fetchone()[0]
+            recipient_total = connection.execute("SELECT COUNT(*) FROM assignment_recipients").fetchone()[0]
+            recipient_submitted = connection.execute(
+                "SELECT COUNT(*) FROM assignment_recipients WHERE status = 'submitted'"
+            ).fetchone()[0]
+            recipient_opened = connection.execute(
+                "SELECT COUNT(*) FROM assignment_recipients WHERE opened_at IS NOT NULL"
+            ).fetchone()[0]
+            class_event_rows = connection.execute(
+                "SELECT u.class_id, COUNT(e.event_id) AS events, COUNT(DISTINCT e.user_id) AS active_users "
+                "FROM users u LEFT JOIN usage_events e ON e.user_id = u.id AND e.created_at >= ? "
+                "WHERE u.role = 'student' AND u.class_id IS NOT NULL GROUP BY u.class_id",
+                (cutoff,),
+            ).fetchall()
+        event_map = {str(row[0]): int(row[1] or 0) for row in event_rows}
+        event_users = {str(row[0]): int(row[2] or 0) for row in event_rows}
+        avg_duration = {str(row[0]): round(float(row[3] or 0)) for row in event_rows}
+        meta_totals: dict[str, int] = {}
+        daily: dict[str, dict[str, int]] = {
+            str(row[0]): {"date": str(row[0]), "events": int(row[1] or 0), "activeUsers": int(row[2] or 0), "practice": 0, "assignmentSubmits": 0}
+            for row in daily_rows
+        }
+        for row in event_meta_rows:
+            event_type = str(row[0])
+            try:
+                meta = json.loads(row[1]) if row[1] else {}
+            except (TypeError, ValueError):
+                meta = {}
+            if isinstance(meta, Mapping):
+                for key in ("questionCount", "count"):
+                    if isinstance(meta.get(key), (int, float)):
+                        meta_totals[key] = meta_totals.get(key, 0) + int(meta[key])
+            # The event date is intentionally derived from the record itself
+            # in a second lightweight query only when daily chart is needed.
+        with self.connect() as connection:
+            typed_days = connection.execute(
+                "SELECT event_date, event_type, COUNT(*) FROM usage_events WHERE created_at >= ? GROUP BY event_date,event_type",
+                (cutoff,),
+            ).fetchall()
+        for row in typed_days:
+            day = daily.setdefault(str(row[0]), {"date": str(row[0]), "events": 0, "activeUsers": 0, "practice": 0, "assignmentSubmits": 0})
+            if row[1] in ("practice_submit", "practice_complete"):
+                day["practice"] += int(row[2] or 0)
+            if row[1] in ("assignment_submit", "assignment_complete"):
+                day["assignmentSubmits"] += int(row[2] or 0)
+        role_counts = {str(row[0]): int(row[1] or 0) for row in user_rows}
+        with self.connect() as connection:
+            active_users = int(connection.execute(
+                "SELECT COUNT(DISTINCT user_id) FROM usage_events WHERE created_at >= ? AND user_id IS NOT NULL",
+                (cutoff,),
+            ).fetchone()[0] or 0)
+        class_event_map = {str(row[0]): {"events": int(row[1] or 0), "activeStudents": int(row[2] or 0)} for row in class_event_rows}
+        all_students = self.list_users("student")
+        classes = []
+        for item in self.list_classes():
+            class_id = str(item.get("id") or "")
+            classes.append({
+                "id": class_id,
+                "name": _safe_text(item.get("name") or item.get("className") or class_id, 120),
+                "students": sum(1 for student in all_students if str(student.get("class_id") or "") == class_id),
+                **class_event_map.get(class_id, {"events": 0, "activeStudents": 0}),
+            })
+        return {
+            "periodDays": days,
+            "since": cutoff * 1000,
+            "generatedAt": now * 1000,
+            "users": {
+                "students": role_counts.get("student", 0),
+                "teachers": role_counts.get("teacher", 0),
+                "admins": role_counts.get("admin", 0),
+                "active": active_users,
+                "activeStudents": event_users.get("practice_submit", 0) + event_users.get("assignment_submit", 0),
+                "activeTeachers": event_users.get("assignment_create", 0),
+            },
+            "learning": {
+                "practiceSubmissions": event_map.get("practice_submit", 0),
+                "assignmentOpens": event_map.get("assignment_open", 0),
+                "assignmentSubmissions": event_map.get("assignment_submit", 0),
+                "wrongReviews": event_map.get("wrong_review", 0),
+                "vocabReviews": event_map.get("vocab_review", 0),
+                "questions": meta_totals.get("questionCount", 0),
+            },
+            "assignments": {
+                "total": int(assignment_total or 0),
+                "recipients": int(recipient_total or 0),
+                "opened": int(recipient_opened or 0),
+                "submitted": int(recipient_submitted or 0),
+                "submissionRate": round((recipient_submitted / recipient_total) * 100, 1) if recipient_total else 0,
+            },
+            "ai": {
+                "requests": event_map.get("ai_request", 0),
+                "success": event_map.get("ai_success", 0),
+                "failure": event_map.get("ai_failure", 0),
+                "avgDurationMs": avg_duration.get("ai_success", 0),
+            },
+            "classes": classes,
+            "daily": [daily[key] for key in sorted(daily)],
+        }
 
     def delete_session(self, token: str | None) -> None:
         if not token:
@@ -3961,6 +4133,7 @@ def _create_blueprint(store: ReadingTrainerStore):
         if not user or (admin_only and user.get("role") != "admin") or not verify_password(password, user.get("password_hash", "")):
             return _error("invalid credentials", 401, "invalid_credentials")
         token = store.create_session(str(user["id"]))
+        store.record_usage_event(str(user["id"]), "login", {"role": user.get("role")})
         if session is not None and current_app.secret_key:
             session["reading_trainer_admin"] = bool(user.get("role") == "admin")
             session["rt_admin"] = bool(user.get("role") == "admin")
@@ -4027,6 +4200,7 @@ def _create_blueprint(store: ReadingTrainerStore):
         if invite:
             store.consume_invite(invite_code, account_id)
         token = store.create_session(account_id)
+        store.record_usage_event(account_id, "register", {"role": role})
         if session is not None and current_app.secret_key:
             session["reading_trainer_admin"] = False
             session["rt_admin"] = False
@@ -4052,6 +4226,54 @@ def _create_blueprint(store: ReadingTrainerStore):
     def auth_session():
         user = _principal(store)
         return jsonify({"authenticated": bool(user), "user": _safe_user(user)})
+
+    @bp.get("/admin/usage")
+    def admin_usage():
+        user, error = _auth_required(store, ("admin",))
+        if error:
+            return error
+        try:
+            days = int(request.args.get("days", 30))
+        except (TypeError, ValueError):
+            days = 30
+        return jsonify({"ok": True, "usage": store.usage_summary(days)})
+
+    @bp.get("/reports/students/<student_id>")
+    def student_report(student_id: str):
+        user, error = _auth_required(store, ("student", "teacher", "admin"))
+        if error:
+            return error
+        student = store.get_user(_safe_text(student_id, 200))
+        if not student or student.get("role") != "student":
+            return _error("student not found", 404, "student_not_found")
+        role = str(user.get("role") or "")
+        if role == "student" and str(user.get("id")) != str(student.get("id")):
+            return _error("insufficient permissions", 403, "forbidden")
+        if role == "teacher" and not store.teacher_can_access(str(user.get("id")), str(student.get("id"))):
+            return _error("insufficient permissions", 403, "forbidden")
+        class_item = None
+        class_id = student.get("class_id")
+        if class_id:
+            class_item = next((item for item in store.list_classes() if str(item.get("id")) == str(class_id)), None)
+        teacher = store.get_user(str(class_item.get("teacherId"))) if class_item and class_item.get("teacherId") else None
+        grades = store.get_document(str(student["id"]), "grades", [])
+        wrong = store.get_document(str(student["id"]), "wbook", [])
+        vocab = store.get_document(str(student["id"]), "vbook", [])
+        grades = grades if isinstance(grades, list) else []
+        wrong = wrong if isinstance(wrong, list) else []
+        vocab = vocab if isinstance(vocab, list) else []
+        return jsonify({
+            "ok": True,
+            "report": {
+                "student": _safe_user(student),
+                "class": sanitize_json(class_item or {"id": class_id, "name": "暂未分配"}),
+                "teacher": _safe_user(teacher),
+                "grades": sanitize_json(grades[-200:]),
+                "wrongCount": len(wrong),
+                "vocabCount": len(vocab),
+                "generatedAt": _now() * 1000,
+            },
+        })
 
     @bp.post("/auth/logout")
     @bp.post("/admin/logout")
@@ -4443,6 +4665,7 @@ def _create_blueprint(store: ReadingTrainerStore):
         assignment = store.mark_assignment_open(assignment_id, str(user["id"]))
         if assignment is None:
             return _assignment_not_found_or_forbidden(assignment_id, user)
+        store.record_usage_event(str(user["id"]), "assignment_open", {"assignmentType": assignment.get("assignmentType")})
         visible = _assignment_view(store, assignment, user, detail=True)
         return jsonify({"ok": True, "assignment": visible, "data": visible, **visible})
 
@@ -4569,6 +4792,7 @@ def _create_blueprint(store: ReadingTrainerStore):
             if saved is None:
                 return _assignment_not_found_or_forbidden(assignment_id, user)
             if not idempotent:
+                store.record_usage_event(str(user["id"]), "assignment_submit", {"questionCount": int(result.get("total") or 0)})
                 store.sync_review_outcomes(str(user["id"]), assignment, result)
                 if int(result.get("total") or 0) > 0:
                     store.record_assignment_outcomes(
@@ -4610,6 +4834,7 @@ def _create_blueprint(store: ReadingTrainerStore):
         if saved is None:
             return _assignment_not_found_or_forbidden(assignment_id, user)
         if not idempotent:
+            store.record_usage_event(str(user["id"]), "assignment_submit", {"questionCount": int(result.get("total") or 0)})
             store.record_assignment_outcomes(str(user["id"]), assignment_id, result, assignment=assignment)
         visible = _assignment_view(store, saved, user, detail=True)
         persisted_result = visible.get("result") or result
@@ -4678,6 +4903,16 @@ def _create_blueprint(store: ReadingTrainerStore):
             saved = store.put_document(owner_id, section, data)
         except (TypeError, ValueError):
             return _error("data is not valid JSON or is too large", 400, "invalid_data")
+        if section == "grades" and isinstance(data, list):
+            store.record_usage_event(
+                str(owner_id),
+                "practice_submit",
+                {"questionCount": sum(
+                    int(item.get("total") or 0)
+                    for item in data[-1:]
+                    if isinstance(item, Mapping) and str(item.get("total") or "0").lstrip("-").isdigit()
+                )},
+            )
         return jsonify(
             {
                 "ok": True,
@@ -4776,6 +5011,8 @@ def _create_blueprint(store: ReadingTrainerStore):
         user, error = _auth_required(store)
         if error:
             return error
+        ai_started = time.monotonic()
+        store.record_usage_event(str(user["id"]), "ai_request")
         payload = _json_body()
         payload = payload if isinstance(payload, Mapping) else {}
         messages = payload.get("messages")
@@ -4868,10 +5105,12 @@ def _create_blueprint(store: ReadingTrainerStore):
 
                 if _ai_response_content_empty(result):
                     return _error("AI 服务商返回了空内容，请稍后重试。", 502, "ai_empty_response")
+            store.record_usage_event(str(user["id"]), "ai_success", duration_ms=int((time.monotonic() - ai_started) * 1000))
             return jsonify({"data": sanitize_json(result)})
         except Exception as exc:
             # Do not reflect upstream response bodies or exception text: they
             # may contain provider keys, URLs, or internal paths.
+            store.record_usage_event(str(user["id"]), "ai_failure", duration_ms=int((time.monotonic() - ai_started) * 1000))
             return _ai_upstream_failure(exc=exc)
 
     @bp.post("/ai/test")

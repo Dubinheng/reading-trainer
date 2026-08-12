@@ -1388,6 +1388,9 @@
   #itr-app .itr-adm-card-t span { color:var(--itr-fg); }
   #itr-app .itr-adm-form { background:var(--itr-card); border:1px solid var(--itr-border); border-radius:14px; padding:16px 18px; margin-bottom:16px; }
   #itr-app .itr-adm-form label { display:block; font-weight:600; margin-bottom:8px; }
+  #itr-app .usage-chart { height:150px; display:flex; align-items:flex-end; gap:6px; padding:10px 6px 0; border-top:1px solid var(--itr-border); }
+  #itr-app .usage-day { height:100%; flex:1; min-width:12px; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:4px; color:var(--itr-muted); font-size:9px; }
+  #itr-app .usage-day i { display:block; width:100%; max-width:28px; min-height:3px; border-radius:5px 5px 2px 2px; background:linear-gradient(180deg,#27BDDE,#0089FE); }
   #itr-app .itr-adm-table { width:100%; border-collapse:collapse; background:var(--itr-card); border:1px solid var(--itr-border); border-radius:12px; overflow:hidden; font-size:13px; }
   #itr-app .itr-adm-table th, #itr-app .itr-adm-table td { padding:10px 12px; border-bottom:1px solid var(--itr-border); text-align:left; }
   #itr-app .itr-adm-table th { background:var(--itr-fill); font-weight:700; }
@@ -1620,6 +1623,7 @@
       <div class="itr-adm-logo">New Century<br><span>管理后台</span></div>
       <nav class="itr-adm-nav" id="itr-admin-nav">
         <button data-adm="overview" class="active">概览</button>
+        <button data-adm="usage">平台使用情况</button>
         <button data-adm="invites">邀请码</button>
         <button data-adm="ai">AI 接口</button>
         <button data-adm="accounts">账号管理</button>
@@ -1642,18 +1646,17 @@
     <div class="itr-tc-header">
       <h3><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="1"/><path d="M12 17v4M9 21h6"/></svg> 教师中心</h3>
       <span style="font-size:13px;color:var(--itr-muted);" id="tc-teacher-name"></span>
-      <button type="button" class="itr-btn itr-primary" id="tc-add-student" style="margin-left:auto;">+ 生成学生邀请码</button>
+      <span style="margin-left:auto;font-size:12px;color:var(--itr-muted);">学生由管理后台统一分配到班级</span>
     </div>
 
     <div class="itr-tc-tabs" id="tc-tabs">
       <button class="itr-tc-tab active" data-tc="students">学生管理</button>
-      <button class="itr-tc-tab" data-tc="invites">邀请码</button>
       <button class="itr-tc-tab" data-tc="library">文章资源</button>
     </div>
 
     <div class="itr-tc-panel active" id="tc-panel-students">
       <div class="itr-tc-students" id="tc-student-list"></div>
-      <p id="tc-no-students" style="display:none;text-align:center;color:var(--itr-muted);padding:30px;font-size:14px;">暂无学生，生成邀请码让学生注册后即可在此管理。</p>
+      <p id="tc-no-students" style="display:none;text-align:center;color:var(--itr-muted);padding:30px;font-size:14px;">暂无本班学生，请联系管理员完成班级分配。</p>
       <div class="itr-tc-detail" id="tc-student-detail" style="display:none;">
         <div class="itr-tc-detail-tabs" id="tc-detail-tabs">
           <button class="itr-tc-tab active" data-tc-tab="score">成绩档案</button>
@@ -1667,7 +1670,6 @@
         <div class="itr-tc-panel" id="tc-panel-tasks"></div>
       </div>
     </div>
-    <div class="itr-tc-panel" id="tc-panel-invites"></div>
     <div class="itr-tc-panel" id="tc-panel-library"></div>
   </section>
 
@@ -5806,59 +5808,47 @@
     var eb = $("itr-stats-export"); if (eb) eb.addEventListener("click", exportScorePDF);
   }
 
-  // Export the current student's score trend + detail table as a printable PDF (opens a new window).
-  function exportScorePDF() {
-    var stu = currentStudent();
+  // Export a school-style, data-driven A4 learning report. The browser print
+  // dialog can save this document as PDF while preserving selectable text.
+  function exportScorePDF(studentId) {
+    var stu = getAccountById(studentId || (currentStudent() && currentStudent().id)) || currentStudent();
+    if (!stu) { setStatus("没有可导出的学生。", true); return; }
     var scope = ($("itr-stats-scope") && $("itr-stats-scope").value) || "all";
-    var all = getGrades(stu.id);
-    var grades = all;
-    if (scope !== "all") {
-      grades = all.filter(function (r) {
-        if (scope === "IELTS") return r.exam === "IELTS" || (r.examDetail && r.examDetail.IELTS);
-        if (scope === "TOEFL") return r.exam === "TOEFL" || (r.examDetail && r.examDetail.TOEFL);
-        return true;
-      });
-    }
-    if (!grades.length) { setStatus("当前筛选（" + scope + "）下没有可导出的成绩记录。", true); return; }
-    var metric = ($("itr-stats-metric") && $("itr-stats-metric").value) || "pct";
-    var series = [{ label: stu.name + "（" + stu.id + "）", color: PALETTE[0], records: grades }];
-    var chartSvg = drawLineChart(series, metric);
-    var now = new Date();
-    var ds = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
-    var rows = "";
-    grades.forEach(function (r, i) {
-      var d = new Date(r.ts);
-      var dd = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-      var lvName = (LEVELS[r.level - 1] ? LEVELS[r.level - 1].name.split(" · ")[0] : ("L" + r.level));
-      rows += "<tr><td>" + (i + 1) + "</td><td>" + dd + "</td><td>" + escapeHtml(r.exam || "—") + "</td><td>" + escapeHtml(lvName) + "</td>" +
-        "<td class='c'>" + r.pct + "%</td><td class='c'>" + r.right + "/" + r.total + "</td><td class='c'>" + (r.unanswered || 0) + "</td></tr>";
+    var all = getGrades(stu.id) || [];
+    var grades = scope === "all" ? all.slice() : all.filter(function (r) {
+      return scope === "IELTS" ? (r.exam === "IELTS" || (r.examDetail && r.examDetail.IELTS)) : (r.exam === "TOEFL" || (r.examDetail && r.examDetail.TOEFL));
     });
-    var scopeTxt = (scope === "IELTS") ? "（仅 IELTS）" : (scope === "TOEFL" ? "（仅 TOEFL）" : "");
-    var html = "<!DOCTYPE html><html lang='zh'><head><meta charset='utf-8'><title>成绩档案 - " + escapeHtml(stu.name) + "</title><style>" +
-      "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;color:#1f2937;margin:24px;}" +
-      ".hd{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #2563eb;padding-bottom:10px;margin-bottom:16px;}" +
-      ".hd h1{font-size:20px;margin:0;}" +
-      ".hd .meta{font-size:13px;color:#6b7280;text-align:right;line-height:1.6;}" +
-      ".sec-title{font-size:15px;font-weight:600;margin:18px 0 8px;}" +
-      "table{width:100%;border-collapse:collapse;font-size:13px;}" +
-      "th,td{border:1px solid #d1d5db;padding:6px 8px;text-align:left;}" +
-      "th{background:#f3f4f6;}" +
-      "td.c,th.c{text-align:center;}" +
-      ".foot{margin-top:18px;font-size:12px;color:#9ca3af;}" +
-      "@media print{body{margin:12mm;}}" +
-      "</style></head><body>" +
-      "<div class='hd'><div><h1>" + ICONS.trend + " 成绩档案报告" + scopeTxt + "</h1></div><div class='meta'>学生：" + escapeHtml(stu.name) + "（" + escapeHtml(stu.id) + "）<br>导出日期：" + ds + "</div></div>" +
-      "<div class='sec-title'>成绩曲线（" + (metric === "pct" ? "正确率 (%)" : "答对题数") + scopeTxt + "）</div>" +
-      "<div class='chart'>" + chartSvg + "</div>" +
-      "<div class='sec-title'>成绩明细（共 " + grades.length + " 次练习" + scopeTxt + "）</div>" +
-      "<table><thead><tr><th>序号</th><th>日期</th><th>考试</th><th>难度</th><th class='c'>正确率</th><th class='c'>答对/总</th><th class='c'>未作答</th></tr></thead><tbody>" + rows + "</tbody></table>" +
-      "<div class='foot'>由「雅思/托福阅读试题转换器」生成 · 数据按学生隔离保存在腾讯服务器</div>" +
-      "</body></html>";
+    if (!grades.length) { setStatus("当前筛选（" + scope + "）下没有可导出的成绩记录。", true); return; }
+    grades.sort(function (a, b) { return diagnosisNumber(a.ts) - diagnosisNumber(b.ts); });
+    var recent = grades.slice(-10), totals = diagnosisTotals(recent), types = diagnosisAggregateTypes(recent), abilities = diagnosisAbilityData(types), weak = diagnosisWeakType(types);
+    var first = grades.length > 1 ? diagnosisRecordTotals(grades[0]).pct : totals.pct;
+    var last = diagnosisRecordTotals(grades[grades.length - 1]).pct, delta = grades.length > 1 ? last - first : 0;
+    var classItem = getClasses().filter(function (c) { return String(c.id) === String(stu.classId || stu.class_id); })[0] || {};
+    var teacher = classItem.teacherId ? getAccountById(classItem.teacherId) : null;
+    var now = new Date(), ds = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+    var encouragement = last >= 90 ? "你的阅读理解能力已经展现出很强的稳定性。保持复盘习惯，下一步可以挑战更高难度或更严格的时间限制。" : last >= 75 ? "你正在形成稳定的解题节奏。把本报告中的薄弱题型作为下一阶段的小目标，每一次订正都会变成新的得分点。" : last >= 60 ? "你已经掌握了一部分方法，成绩提升的空间也很清晰。先从最薄弱的一类题型开始，持续练习比一次做很多更有效。" : "现在的成绩只是起点，不是结论。建议先回到文章定位证据、整理错题，再用短而稳定的练习逐步建立信心。";
+    if (weak && weak.pct < 50) encouragement += " 本阶段优先关注“" + typeLabel(weak.type) + "”，每次练习后记录错因，进步会更容易被看见。";
+    var chartSvg = drawLineChart([{ label: stu.username || stu.name || stu.id, color: "#0089FE", records: grades }], "pct");
+    var metricCards = "<div class='metrics'><div><b>" + totals.pct + "%</b><span>近 10 次正确率</span></div><div><b>" + totals.right + " / " + totals.total + "</b><span>答对题数</span></div><div><b>" + (totals.total - totals.right - totals.unanswered) + "</b><span>答错题数</span></div><div><b>" + totals.unanswered + "</b><span>未作答</span></div></div>";
+    var abilityRows = abilities.map(function (a) { return "<tr><td>" + escapeHtml(a.name) + "</td><td>" + (a.total ? a.pct + "%" : "—") + "</td><td><div class='bar'><i style='width:" + a.pct + "%'></i></div></td><td>" + (a.total ? a.total + " 题" : "暂无样本") + "</td></tr>"; }).join("");
+    var typeRows = Object.keys(types).sort(function (a, b) { return types[a].pct - types[b].pct; }).map(function (t) { var d = types[t]; return "<tr><td>" + escapeHtml(typeLabel(t)) + "</td><td>" + escapeHtml(diagnosisTypeAbility(t)) + "</td><td>" + d.right + "/" + d.total + "</td><td>" + d.pct + "%</td></tr>"; }).join("");
+    var rows = grades.slice().reverse().map(function (r, i) { var date = new Date(r.ts); var dd = isNaN(date.getTime()) ? "—" : (date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0")); var lv = LEVELS[r.level - 1] ? LEVELS[r.level - 1].name.split(" · ")[0] : (r.level ? "L" + r.level : "—"); return "<tr><td>" + (grades.length - i) + "</td><td>" + dd + "</td><td>" + escapeHtml(r.exam || "—") + "</td><td>" + escapeHtml(lv) + "</td><td>" + diagnosisRecordTotals(r).pct + "%</td><td>" + (r.right || 0) + "/" + (r.total || 0) + "</td><td>" + (r.unanswered || 0) + "</td></tr>"; }).join("");
+    var scopeTxt = scope === "all" ? "" : " · " + scope;
+    var html = "<!DOCTYPE html><html lang='zh'><head><meta charset='utf-8'><title>学生学习报告 - " + escapeHtml(stu.username || stu.name || stu.id) + "</title><style>" +
+      "@page{size:A4;margin:14mm 13mm 15mm}*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#15304a;margin:0;font-size:11px;line-height:1.55;background:#fff}.page{page-break-after:always}.page:last-child{page-break-after:auto}.brand{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #14b8d4;padding-bottom:9px}.brand h1{font-size:22px;margin:0;color:#0877b9;letter-spacing:1px}.brand-logo{display:block;width:180px;height:42px;object-fit:contain;object-position:left center;margin-bottom:2px}.brand .sub{color:#1aa87b;font-size:12px;margin-top:2px}.meta{text-align:right;color:#557083;line-height:1.8}.hero{margin:14px 0;padding:14px 16px;border-radius:14px;background:linear-gradient(135deg,#e8f7ff,#edfff5);border:1px solid #cbe9ee}.hero h2{margin:0 0 3px;font-size:18px;color:#0c668e}.hero p{margin:0;color:#557083}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}.metrics>div{border:1px solid #d6e8ef;border-radius:10px;padding:9px 8px;background:#fbfdff}.metrics b{display:block;font-size:19px;color:#0877b9}.metrics span{color:#67808e;font-size:10px}.section{margin:14px 0}.section h3{font-size:13px;color:#086b96;border-left:4px solid #14b8d4;padding-left:7px;margin:0 0 7px}.chart{border:1px solid #e0edf2;border-radius:10px;padding:4px;background:#fff}.chart svg{width:100%;height:auto}.two{display:grid;grid-template-columns:1fr 1fr;gap:11px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #d7e4ea;padding:5px 6px;text-align:left}th{background:#eaf5f8;color:#28596d}td:nth-child(n+2){text-align:center}.bar{height:7px;border-radius:8px;background:#e6f0f3;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,#20b48b,#168ed1);border-radius:8px}.callout{padding:11px 13px;background:#fff8e8;border:1px solid #f5dca5;border-radius:10px;color:#6a4a17}.foot{margin-top:18px;color:#8ba0aa;font-size:9px;text-align:center;border-top:1px solid #e2edf0;padding-top:7px}.small{color:#6e8793;font-size:10px}@media print{.no-print{display:none}}" +
+      "</style></head><body><div class='page'><div class='brand'><div><img class='brand-logo' src='/reading-trainer/assets/logo_t.png' alt='新世纪 reading trainer'><div class='sub'>学生学习报告 · 阅读能力成长记录</div></div><div class='meta'>报告日期：" + ds + "<br>数据范围：" + (scopeTxt || "全部练习") + "</div></div>" +
+      "<div class='hero'><h2>" + escapeHtml(stu.username || stu.name || stu.id) + " 的学习报告</h2><p>班级：" + escapeHtml(classItem.name || "暂未分配") + "　指导老师：" + escapeHtml(teacher ? (teacher.username || teacher.name) : "暂未分配") + "</p><p class='small'>本报告用于观察学习趋势和训练重点，不作为一次考试的单独结论。</p></div>" + metricCards +
+      "<div class='section'><h3>一、成绩趋势</h3><div class='chart'>" + chartSvg + "</div><p class='small'>共 " + grades.length + " 次记录；首个可比成绩 " + first + "%，最近一次 " + last + "%，阶段变化 " + (delta >= 0 ? "+" : "") + delta + " 个百分点。</p></div>" +
+      "<div class='section'><h3>二、阅读能力画像</h3><table><thead><tr><th>能力维度</th><th>正确率</th><th>表现条</th><th>样本</th></tr></thead><tbody>" + abilityRows + "</tbody></table></div>" +
+      "<div class='section'><h3>三、给你的话</h3><div class='callout'>" + escapeHtml(encouragement) + "</div></div><div class='foot'>由新世纪 reading trainer 生成 · 数据按学生账号隔离保存在服务器</div></div>" +
+      "<div class='page'><div class='brand'><div><h1>学习诊断明细</h1><div class='sub'>题型表现与下一步训练建议</div></div><div class='meta'>学生：" + escapeHtml(stu.username || stu.name || stu.id) + "</div></div>" +
+      "<div class='section'><h3>四、题型表现（对应能力）</h3>" + (typeRows ? "<table><thead><tr><th>题型</th><th>对应能力</th><th>答对/总题</th><th>正确率</th></tr></thead><tbody>" + typeRows + "</tbody></table>" : "<div class='callout'>当前成绩没有题型分项数据，完成一次新的分项练习后即可生成更细的画像。</div>") + "</div>" +
+      "<div class='section'><h3>五、训练建议</h3><div class='callout'>" + (weak ? "当前优先训练：<b>" + escapeHtml(typeLabel(weak.type)) + "</b>（" + weak.pct + "%，" + weak.total + " 题）。" + escapeHtml(TYPE_ADVICE[weak.type] || "回到原文定位证据，并记录每次错误的原因。") : "继续积累包含题型分项的练习记录，系统会逐步形成针对性的训练建议。") + "</div></div>" +
+      "<div class='section'><h3>六、练习记录（最近至今）</h3><table><thead><tr><th>序号</th><th>日期</th><th>考试</th><th>难度</th><th>正确率</th><th>答对/总题</th><th>未作答</th></tr></thead><tbody>" + rows + "</tbody></table></div><div class='foot'>建议每 3–5 次练习回看一次报告，关注趋势和能力维度的变化。</div></div></body></html>";
     var w = (typeof window.open === "function") ? window.open("", "_blank") : null;
     if (!w) { alert("导出失败：浏览器拦截了弹出窗口，请允许本页面弹出窗口后重试。"); return; }
-    w.document.open(); w.document.write(html); w.document.close();
-    w.focus();
-    setTimeout(function () { try { w.print(); } catch (e) {} }, 400);
+    w.document.open(); w.document.write(html); w.document.close(); w.focus();
+    setTimeout(function () { try { w.print(); } catch (e) {} }, 500);
   }
 
   // ---------- Generate flow ----------
@@ -6645,32 +6635,13 @@ function showRoleGate() {
     tabs.querySelectorAll('.itr-tc-tab').forEach(function(b){
       b.addEventListener('click', function(){
         tabs.querySelectorAll('.itr-tc-tab').forEach(function(x){ x.classList.remove('active'); });
-        ['tc-panel-students','tc-panel-invites','tc-panel-library'].forEach(function(pid){ var p=document.getElementById(pid); if(p) p.classList.remove('active'); });
+        ['tc-panel-students','tc-panel-library'].forEach(function(pid){ var p=document.getElementById(pid); if(p) p.classList.remove('active'); });
         b.classList.add('active');
         var t = b.getAttribute('data-tc');
         if (t === 'students') { var ps=document.getElementById('tc-panel-students'); if(ps) ps.classList.add('active'); renderTeacherCenter(); }
-        else if (t === 'invites') { var pi=document.getElementById('tc-panel-invites'); if(pi) pi.classList.add('active'); renderTCInvites(); }
         else if (t === 'library') { var pl=document.getElementById('tc-panel-library'); if(pl) pl.classList.add('active'); renderTCLibrary(); }
       });
     });
-  }
-  function renderTCInvites() {
-    if (!currentUser || currentUser.role !== 'teacher') return;
-    var panel = document.getElementById('tc-panel-invites'); if (!panel) return;
-    var html = '<div class="itr-adm-form"><label>为本班生成学生邀请码（学生注册后自动归入你名下）</label><div class="itr-row"><button type="button" class="itr-btn itr-primary" id="tc-inv-gen">生成学生邀请码</button></div></div>';
-    html += '<table class="itr-adm-table"><thead><tr><th>邀请码</th><th>状态</th><th>操作</th></tr></thead><tbody>';
-    var invs = getInvites().filter(function(i){ return i.teacherId === currentUser.id; }).slice().reverse();
-    if (!invs.length) html += '<tr><td colspan="3" style="text-align:center;color:var(--itr-muted);">还没有邀请码，点上方按钮生成。</td></tr>';
-    invs.forEach(function(inv){
-      html += '<tr><td><code>'+escapeHtml(inv.code)+'</code></td><td>'+(inv.used?'<span class="itr-tag-used">已使用</span>':'<span class="itr-tag-ok">可用</span>')+'</td><td><button type="button" class="itr-link" data-copy="'+escapeHtml(inv.code)+'">复制</button> '+(inv.used?'':'<button type="button" class="itr-link" data-revoke="'+escapeHtml(inv.code)+'">撤销</button>')+'</td></tr>';
-    });
-    html += '</tbody></table>';
-    panel.innerHTML = html;
-    var gen = document.getElementById('tc-inv-gen'); if (gen) gen.addEventListener('click', function(){
-      var c = genCode(); var all = getInvites(); all.push({ code:c, role:'student', teacherId:currentUser.id, used:false, createdBy:currentUser.id, createdAt:Date.now() }); saveInvites(all); renderTCInvites(); showToast('已生成学生邀请码 '+c);
-    });
-    panel.querySelectorAll('[data-copy]').forEach(function(b){ b.addEventListener('click', function(){ copyText(b.getAttribute('data-copy')); }); });
-    panel.querySelectorAll('[data-revoke]').forEach(function(b){ b.addEventListener('click', function(){ var c=b.getAttribute('data-revoke'); saveInvites(getInvites().filter(function(x){ return x.code!==c; })); renderTCInvites(); }); });
   }
   function renderTCLibrary() {
     if (!currentUser || currentUser.role !== 'teacher') return;
@@ -6697,16 +6668,6 @@ function showRoleGate() {
     });
     panel.querySelectorAll('[data-artrm]').forEach(function(b){ b.addEventListener('click', function(){ var l=getTeacherLibrary(); l.splice(+b.getAttribute('data-artrm'),1); saveTeacherLibrary(l); renderTCLibrary(); }); });
   }
-  // Teacher: generate a student invite code (assigned to current teacher)
-  document.getElementById('tc-add-student').addEventListener('click', function() {
-    if (!currentUser || currentUser.role !== 'teacher') return;
-    var code = genCode();
-    var all = getInvites();
-    all.push({ code: code, role: 'student', teacherId: currentUser.id, used: false, createdBy: currentUser.id, createdAt: Date.now() });
-    saveInvites(all);
-    showToast('已生成学生邀请码：' + code + '（请发给学生注册）');
-    renderTCInvites();
-  });
 
   // Override initRole to check auth first
   var _origInitRole = initRole;
@@ -6774,9 +6735,10 @@ function showRoleGate() {
   function adminOverviewCard(t,v,s){ return '<div class="itr-adm-card"><div class="itr-adm-card-v">'+escapeHtml(String(v))+'</div><div class="itr-adm-card-t">'+escapeHtml(t)+(s?' <span>'+escapeHtml(s)+'</span>':'')+'</div></div>'; }
   function renderAdmin(tab){
     var nav=document.getElementById('itr-admin-nav'); if(nav){ nav.querySelectorAll('button').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-adm')===tab); }); }
-    var titleMap={overview:'概览', invites:'邀请码', ai:'AI 接口', accounts:'账号管理', classes:'班级管理', feishu:'飞书同步'};
+    var titleMap={overview:'概览', usage:'平台使用情况', invites:'邀请码', ai:'AI 接口', accounts:'账号管理', classes:'班级管理', feishu:'飞书同步'};
     var tt=document.getElementById('itr-admin-title'); if(tt) tt.textContent='管理者后台 · '+(titleMap[tab]||'');
     if(tab==='overview') renderAdminOverview();
+    else if(tab==='usage') renderAdminUsage();
     else if(tab==='invites') renderAdminInvites();
     else if(tab==='ai') renderAdminAI();
     else if(tab==='accounts') renderAdminAccounts();
@@ -6804,6 +6766,25 @@ function showRoleGate() {
       if(msg) msg.textContent = '正在同步…';
       syncAllToFeishu(true).then(function(res){ if(msg) msg.textContent=res?'同步完成':'同步失败'; });
     });
+  }
+  function renderAdminUsage(){
+    var c=document.getElementById('itr-admin-content'); if(!c) return;
+    c.innerHTML='<div class="itr-adm-hint">正在读取服务器统计…</div>';
+    var days=window.__itrUsageDays || 30;
+    apiV2('/admin/usage?days='+days).then(function(res){
+      var u=res&&res.usage||{}, users=u.users||{}, learning=u.learning||{}, assignments=u.assignments||{}, ai=u.ai||{}, classes=Array.isArray(u.classes)?u.classes:[];
+      var daily=Array.isArray(u.daily)?u.daily:[];
+      var maxEvents=Math.max.apply(null,[1].concat(daily.map(function(d){return Number(d.events||0);})));
+      var chart=daily.slice(-14).map(function(d){ var h=Math.max(3,Math.round(Number(d.events||0)/maxEvents*100)); return '<div class="usage-day" title="'+escapeHtml(d.date||'')+'：'+(d.events||0)+' 次"><i style="height:'+h+'%"></i><span>'+escapeHtml(String(d.date||'').slice(5))+'</span></div>'; }).join('');
+      var html='<div class="itr-adm-form"><div class="itr-row" style="justify-content:space-between;align-items:center;"><div><label>平台整体使用情况</label><div class="itr-hint">统计来自服务器事件记录，不包含题目内容、答案或密钥。</div></div><div class="itr-diag-seg"><button type="button" data-usage-days="7" class="'+(days===7?'active':'')+'">近 7 天</button><button type="button" data-usage-days="30" class="'+(days===30?'active':'')+'">近 30 天</button><button type="button" data-usage-days="90" class="'+(days===90?'active':'')+'">近 90 天</button></div></div></div>';
+      html+='<div class="itr-adm-cards">'+adminOverviewCard('学生',users.students||0,'位')+adminOverviewCard('教师',users.teachers||0,'位')+adminOverviewCard('活跃用户',users.active||0,'人次')+adminOverviewCard('练习提交',learning.practiceSubmissions||0,'次')+adminOverviewCard('作业提交',learning.assignmentSubmissions||0,'次')+adminOverviewCard('AI 请求',ai.requests||0,'次')+'</div>';
+      html+='<div class="itr-adm-form"><label>每日活动（最近 14 天）</label><div class="usage-chart">'+(chart||'<span class="itr-hint">暂无事件记录</span>')+'</div></div>';
+      html+='<div class="itr-adm-cards">'+adminOverviewCard('作业总数',assignments.total||0,'份')+adminOverviewCard('已打开作业',assignments.opened||0,'人次')+adminOverviewCard('已提交作业',assignments.submitted||0,'人次')+adminOverviewCard('提交率',String(assignments.submissionRate||0)+'%','')+adminOverviewCard('错题复习',learning.wrongReviews||0,'次')+adminOverviewCard('词汇复习',learning.vocabReviews||0,'次')+'</div>';
+      if(classes.length){ html+='<div class="itr-adm-form"><label>班级活跃度</label><table class="itr-adm-table"><thead><tr><th>班级</th><th>学生数</th><th>活跃学生</th><th>事件数</th></tr></thead><tbody>'+classes.map(function(cls){return '<tr><td>'+escapeHtml(cls.name||cls.id)+'</td><td>'+Number(cls.students||0)+'</td><td>'+Number(cls.activeStudents||0)+'</td><td>'+Number(cls.events||0)+'</td></tr>';}).join('')+'</tbody></table></div>'; }
+      html+='<div class="itr-adm-hint">AI 成功 '+(ai.success||0)+' 次，失败 '+(ai.failure||0)+' 次，平均响应 '+(ai.avgDurationMs||0)+' ms；统计生成于 '+new Date(u.generatedAt||Date.now()).toLocaleString()+'。</div>';
+      c.innerHTML=html;
+      c.querySelectorAll('[data-usage-days]').forEach(function(b){b.addEventListener('click',function(){window.__itrUsageDays=Number(b.getAttribute('data-usage-days'))||30;renderAdminUsage();});});
+    }).catch(function(ex){ c.innerHTML='<div class="itr-stats-empty">平台统计读取失败：'+escapeHtml(ex&&ex.message?ex.message:'请稍后重试')+'</div>'; });
   }
   function renderAdminOverview(){
     var accs=getAccounts();

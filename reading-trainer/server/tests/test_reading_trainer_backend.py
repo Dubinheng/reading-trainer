@@ -126,6 +126,35 @@ def test_register_login_session_and_logout_do_not_return_session_or_hash(tmp_pat
     assert admin_client.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["role"] == "admin"
 
 
+def test_admin_usage_and_student_report_are_scoped_and_aggregate_only(tmp_path):
+    app = make_app(tmp_path)
+    student = app.test_client()
+    registration = register(student, "report-user")
+    student_id = registration.get_json()["user"]["id"]
+    student.put(
+        "/reading-trainer/api/v2/data/grades",
+        json={"data": [{"id": "g1", "pct": 82, "right": 8, "total": 10, "ts": 1}]},
+    )
+    report = student.get(f"/reading-trainer/api/v2/reports/students/{student_id}")
+    assert report.status_code == 200
+    assert report.get_json()["report"]["grades"][0]["pct"] == 82
+
+    other = app.test_client()
+    register(other, "other-report-user")
+    other_id = other.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    assert student.get(f"/reading-trainer/api/v2/reports/students/{other_id}").status_code == 403
+
+    admin = app.test_client()
+    admin_login(admin)
+    usage = admin.get("/reading-trainer/api/v2/admin/usage?days=7")
+    assert usage.status_code == 200
+    body = usage.get_json()["usage"]
+    assert body["users"]["students"] == 2
+    assert body["learning"]["practiceSubmissions"] >= 1
+    assert "password" not in json.dumps(body).lower()
+    assert student.get("/reading-trainer/api/v2/admin/usage").status_code == 403
+
+
 def test_authorization_isolation_and_teacher_student_scope(tmp_path):
     app = make_app(tmp_path)
     alice_client = app.test_client()

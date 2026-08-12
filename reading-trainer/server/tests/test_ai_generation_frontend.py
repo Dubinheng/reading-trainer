@@ -247,6 +247,27 @@ def test_student_personal_diagnosis_uses_shared_grade_dimensions():
     assert "byExam: cloneData(examDetail" in grade_source
 
 
+def test_teacher_invites_are_removed_and_admin_usage_report_is_present():
+    source = FRONTEND.read_text(encoding="utf-8")
+    assert 'data-adm="usage"' in source
+    assert "apiV2('/admin/usage?days='" in source
+    assert "平台使用情况" in source
+    assert "#tc-add-student" not in source
+    assert "#tc-panel-invites" not in source
+    assert 'data-tc="invites"' not in source
+    assert "function renderTCInvites" not in source
+
+
+def test_score_report_export_is_a4_and_uses_evidence_based_encouragement():
+    source = FRONTEND.read_text(encoding="utf-8")
+    export_source = _function_source(source, "exportScorePDF", "setStatus")
+    assert "@page{size:A4" in export_source
+    assert "学生学习报告" in export_source
+    assert "阅读能力画像" in export_source
+    assert "给你的话" in export_source
+    assert "last >= 90" in export_source
+
+
 def test_student_personal_diagnosis_aggregates_assignment_and_practice_records():
     if shutil.which("node") is None:
         pytest.skip("Node.js is required to execute the embedded diagnosis helpers")
