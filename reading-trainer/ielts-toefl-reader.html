@@ -368,6 +368,15 @@
   #itr-app .itr-book-panel.open { display: block; }
   #itr-app .itr-book-filters { display:flex; gap:8px; margin:10px 0 14px; flex-wrap:wrap; }
   #itr-app .itr-review-state { font-size:11px; color:var(--itr-muted); margin-left:auto; white-space:nowrap; }
+  #itr-app .itr-warticle-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
+  #itr-app .itr-warticle-card { border:1px solid var(--itr-border); border-radius:14px; padding:15px; background:var(--itr-bg); box-shadow:var(--itr-shadow-1); transition:transform var(--itr-duration) var(--itr-ease),box-shadow var(--itr-duration) var(--itr-ease),border-color var(--itr-duration) var(--itr-ease); }
+  #itr-app .itr-warticle-card:hover { transform:translateY(-2px); border-color:var(--itr-primary); box-shadow:var(--itr-shadow-2); }
+  #itr-app .itr-warticle-title { display:flex; align-items:flex-start; gap:8px; font-size:16px; font-weight:800; color:var(--itr-text); }
+  #itr-app .itr-warticle-title .itr-review-state { margin-top:2px; }
+  #itr-app .itr-warticle-excerpt { color:var(--itr-muted); font-size:12px; line-height:1.6; margin:9px 0; min-height:38px; }
+  #itr-app .itr-warticle-meta { display:flex; gap:7px; flex-wrap:wrap; color:var(--itr-muted); font-size:11px; }
+  #itr-app .itr-warticle-tag { display:inline-flex; align-items:center; border-radius:999px; padding:3px 8px; background:var(--itr-primary-soft); color:var(--itr-primary-on-soft); font-weight:700; }
+  #itr-app .itr-warticle-actions { display:flex; align-items:center; gap:8px; margin-top:12px; }
   #itr-app .itr-tc-readonly-hint { color:var(--itr-muted); font-size:12px; margin-bottom:8px; }
   #itr-app .itr-tc-class-filter { margin-left:auto; min-width:150px; }
   #itr-app .itr-review-vocab-item .reveal { display:none; margin:8px 0; padding:8px; border-top:1px dashed var(--itr-border); }
@@ -5104,36 +5113,69 @@
     if (!item) return '';
     return item.itemId || item.item_id || item.id || item.key || item.wrongItemId || item.wrong_item_id || (item.q && (item.q.itemId || item.q.item_id)) || (index == null ? '' : 'legacy-' + index);
   }
+  function wrongArticleGroupId(item, index) {
+    if (!item) return 'legacy-' + index;
+    return String(item.articleGroupId || item.article_group_id || item.articleId || item.article_id || ('legacy-' + wrongItemId(item, index)));
+  }
+  function wrongArticleSourceLabel(item) {
+    var source = String(item && (item.sourceType || item.source_type || item.source) || '').toLowerCase();
+    if (source === 'assignment') return '题卡作业';
+    if (source === 'review') return '复习任务';
+    return '练习答题';
+  }
+  function wrongArticleGroups(book, filter) {
+    var groups = [], byId = {};
+    (book || []).forEach(function (item, index) {
+      if (wrongBookStatus(item) !== filter) return;
+      var id = wrongArticleGroupId(item, index);
+      var group = byId[id];
+      if (!group) {
+        group = byId[id] = {
+          id: id,
+          title: item.articleTitle || item.article_title || item.sectionTitle || item.assignmentTitle || '未命名文章',
+          excerpt: item.articleExcerpt || item.article_excerpt || '',
+          article: item.article || '',
+          items: [], sources: {}, latest: 0, errorEvents: 0
+        };
+        groups.push(group);
+      }
+      group.items.push({ item: item, index: index });
+      group.sources[wrongArticleSourceLabel(item)] = true;
+      group.latest = Math.max(group.latest, Number(item.lastReviewedAt || item.last_reviewed_at || item.ts || 0) || 0);
+      group.errorEvents += (Number(item.errorCount || item.error_count || 0) || 0) + (Number(item.unansweredCount || item.unanswered_count || 0) || 0);
+      if (!group.article && item.article) group.article = item.article;
+      if (!group.excerpt && item.article) group.excerpt = String(item.article).replace(/\s+/g, ' ').slice(0, 180);
+    });
+    groups.sort(function (a, b) { return b.latest - a.latest; });
+    return groups;
+  }
+  function wrongArticleRecentText(ts) {
+    if (!ts) return '暂无复习时间';
+    try { return '最近记录 ' + new Date(ts).toLocaleDateString('zh-CN'); } catch (e) { return '最近已复习'; }
+  }
   function renderWBook() {
     var panel = $("itr-wbook-panel");
     var book = getWBook();
     var filter = assignmentState.wrongFilter || 'pending';
     var pending = book.filter(function (item) { return wrongBookStatus(item) !== 'mastered'; });
     var mastered = book.filter(function (item) { return wrongBookStatus(item) === 'mastered'; });
-    var filtered = filter === 'mastered' ? mastered : pending;
-    var html = '<div class="itr-book-head"><h3>' + ICONS.clip + ' 我的错题记录</h3><span class="count">' + pending.length + ' 题待巩固 · ' + mastered.length + ' 题已掌握</span><span class="spacer"></span>';
-    if (pending.length) html += '<button type="button" class="itr-btn itr-primary" id="itr-wreview">' + ICONS.refresh + ' 重做待巩固 (' + pending.length + ')</button>';
+    var pendingGroups = wrongArticleGroups(book, 'pending');
+    var masteredGroups = wrongArticleGroups(book, 'mastered');
+    var groups = filter === 'mastered' ? masteredGroups : pendingGroups;
+    var html = '<div class="itr-book-head"><h3>' + ICONS.clip + ' 我的错题文章</h3><span class="count">' + pendingGroups.length + ' 篇待巩固 · ' + pending.length + ' 道错题</span><span class="spacer"></span>';
     html += '<button type="button" class="itr-link" id="itr-wbook-close">收起</button></div>';
-    html += '<div class="itr-book-filters"><button type="button" class="itr-assignment-filter' + (filter === 'pending' ? ' active' : '') + '" data-wbook-filter="pending">待巩固 (' + pending.length + ')</button><button type="button" class="itr-assignment-filter' + (filter === 'mastered' ? ' active' : '') + '" data-wbook-filter="mastered">已掌握 (' + mastered.length + ')</button></div>';
-    if (!filtered.length) {
+    html += '<div class="itr-book-filters"><button type="button" class="itr-assignment-filter' + (filter === 'pending' ? ' active' : '') + '" data-wbook-filter="pending">待巩固文章 (' + pendingGroups.length + ')</button><button type="button" class="itr-assignment-filter' + (filter === 'mastered' ? ' active' : '') + '" data-wbook-filter="mastered">已掌握文章 (' + masteredGroups.length + ')</button></div>';
+    if (!groups.length) {
       html += '<div class="itr-book-empty">错题记录空空如也 —— 说明你还没提交过练习，或全都答对了 ' + ICONS.party + '</div>';
     } else {
-      html += '<div class="itr-book-list">';
-      filtered.forEach(function (item, i) {
-        var q = normalizeAssignmentQuestion(item.q || {}, i);
-        var sourceIndex = book.indexOf(item);
-        var streak = Number(item.masteryStreak != null ? item.masteryStreak : (item.mastery_streak != null ? item.mastery_streak : 0)) || 0;
-        var errorCount = Number(item.errorCount != null ? item.errorCount : item.error_count || 0) || 0;
-        var unansweredCount = Number(item.unansweredCount != null ? item.unansweredCount : item.unanswered_count || 0) || 0;
-        html += '<div class="itr-book-item" data-i="' + sourceIndex + '">' +
-          '<div class="row1"><span class="w">' + escapeHtml(typeLabel(q.type)) + (q.exam ? " · " + escapeHtml(q.exam) : "") + '</span>' +
-          '<span class="itr-review-state">' + (wrongBookStatus(item) === 'mastered' ? '已掌握' : '待巩固') + ' · 连续答对 ' + streak + '/3</span></div>' +
-          '<div class="meta">' + escapeHtml(q.prompt).replace(/\n/g, " ") + '</div>' +
-          '<div class="meta">答错 ' + errorCount + ' 次 · 未作答 ' + unansweredCount + ' 次</div>' +
-          '<div class="meta" style="color:var(--itr-red)">你的答案：' + escapeHtml(assignmentRawAnswerText(item.userAnswer)) + '</div>' +
-          '<div class="meta" style="color:var(--itr-green)">正确答案：' + answerDisplay(q) + '</div>' +
-          (filter === 'pending' ? '<div style="margin-top:8px;"><button type="button" class="itr-btn itr-ghost" data-wredo="' + sourceIndex + '">重做</button></div>' : '') +
-          '</div>';
+      html += '<div class="itr-warticle-list">';
+      groups.forEach(function (group, groupIndex) {
+        var sources = Object.keys(group.sources).join(' · ');
+        html += '<article class="itr-warticle-card" data-warticle-card="' + groupIndex + '">' +
+          '<div class="itr-warticle-title"><span>' + ICONS.book + '</span><span>' + escapeHtml(group.title) + '</span><span class="itr-review-state">' + (filter === 'mastered' ? '已掌握' : '待巩固') + '</span></div>' +
+          '<div class="itr-warticle-excerpt">' + escapeHtml(group.excerpt || '该文章暂无摘要，点击查看错题详情。') + '</div>' +
+          '<div class="itr-warticle-meta"><span class="itr-warticle-tag">' + (filter === 'mastered' ? '已掌握 ' : '错 ') + group.items.length + ' 题</span><span>' + escapeHtml(sources) + '</span><span>' + escapeHtml(wrongArticleRecentText(group.latest)) + '</span></div>' +
+          '<div class="itr-warticle-actions"><button type="button" class="itr-btn itr-' + (filter === 'pending' ? 'primary' : 'ghost') + '" data-warticle-open="' + groupIndex + '">' + (filter === 'pending' ? '查看并重做本篇错题' : '查看本篇记录') + '</button><span class="itr-review-state">累计错误/未答 ' + group.errorEvents + ' 次</span></div></article>';
       });
       html += '</div>';
     }
@@ -5142,17 +5184,41 @@
     panel.querySelectorAll('[data-wbook-filter]').forEach(function (b) {
       b.addEventListener('click', function () { assignmentState.wrongFilter = b.getAttribute('data-wbook-filter') || 'pending'; renderWBook(); });
     });
-    panel.querySelectorAll("[data-wredo]").forEach(function (b) {
-      b.addEventListener("click", function () { wrongReview([+b.getAttribute("data-wredo")]); });
+    panel.querySelectorAll("[data-warticle-open]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var group = groups[+b.getAttribute("data-warticle-open")];
+        if (group) renderWrongArticle(group.id, filter);
+      });
     });
     var closeBtn = $("itr-wbook-close"); if (closeBtn) closeBtn.addEventListener("click", function () { switchTab("practice"); });
-    var rb = $("itr-wreview"); if (rb) rb.addEventListener("click", function () { wrongReview(pending.map(function (item) { return book.indexOf(item); })); });
   }
-  function wrongReview(indices) {
+  function renderWrongArticle(groupId, filter) {
+    var panel = $("itr-wbook-panel"), book = getWBook();
+    var group = wrongArticleGroups(book, filter || 'pending').filter(function (candidate) { return candidate.id === groupId; })[0];
+    if (!group) { renderWBook(); return; }
+    var html = '<div class="itr-book-head"><button type="button" class="itr-link" id="itr-warticle-back">← 返回文章列表</button><h3>' + escapeHtml(group.title) + '</h3><span class="count">' + group.items.length + ' 道' + (filter === 'mastered' ? '已掌握题' : '待巩固错题') + '</span><span class="spacer"></span>';
+    if (filter !== 'mastered') html += '<button type="button" class="itr-btn itr-primary" id="itr-warticle-review">' + ICONS.refresh + ' 重做本篇错题</button>';
+    html += '</div>';
+    if (group.article) html += '<details class="itr-article" style="margin-bottom:12px;"><summary style="cursor:pointer;font-weight:700;">查看文章原文</summary><div style="max-height:280px;overflow:auto;margin-top:10px;">' + renderArticle(group.article) + '</div></details>';
+    html += '<div class="itr-book-list">';
+    group.items.forEach(function (entry, i) {
+      var item = entry.item, q = normalizeAssignmentQuestion(item.q || {}, i);
+      var streak = Number(item.masteryStreak != null ? item.masteryStreak : item.mastery_streak || 0) || 0;
+      html += '<div class="itr-book-item"><div class="row1"><span class="w">' + escapeHtml(typeLabel(q.type)) + (q.exam ? ' · ' + escapeHtml(q.exam) : '') + '</span><span class="itr-review-state">连续答对 ' + streak + '/3</span></div>' +
+        '<div class="meta">' + escapeHtml(q.prompt).replace(/\n/g, ' ') + '</div>' +
+        '<div class="meta">最近答案：<span style="color:var(--itr-red)">' + escapeHtml(assignmentRawAnswerText(item.userAnswer)) + '</span> · 正确答案：<span style="color:var(--itr-green)">' + answerDisplay(q) + '</span></div></div>';
+    });
+    html += '</div>';
+    panel.innerHTML = html;
+    $("itr-warticle-back").addEventListener('click', renderWBook);
+    var reviewButton = $("itr-warticle-review");
+    if (reviewButton) reviewButton.addEventListener('click', function () { wrongReview(group.items.map(function (entry) { return entry.index; }), { groupId: group.id, title: group.title }); });
+  }
+  function wrongReview(indices, context) {
     var panel = $("itr-wbook-panel");
     var book = getWBook();
     var queue = indices.map(function (i) { return book[i]; }).filter(function (item) { return item && wrongBookStatus(item) !== 'mastered'; });
-    var idx = 0, master = 0, notMaster = 0, unanswered = 0;
+    var idx = 0, master = 0, notMaster = 0, unanswered = 0, newlyMastered = 0, byType = {};
     function show() {
       if (idx >= queue.length) { finish(); return; }
       var item = queue[idx]; var q = normalizeAssignmentQuestion(item.q || {}, idx);
@@ -5188,9 +5254,15 @@
           var mastered = result.mastered === true || status === 'mastered' || status === 'done' || status === 'complete';
           if (res && res.state) applyServerState(res.state);
           updateWrongBookMemory(item, Object.assign({}, result, { masteryStreak: streak, mastered: mastered, status: mastered ? 'mastered' : 'pending' }));
-          if (correct) master++; else if (!answered) unanswered++; else notMaster++;
+          var label = typeLabel(q.type) || '其他题型';
+          if (!byType[label]) byType[label] = { total: 0, right: 0 };
+          byType[label].total++;
+          if (correct) { master++; byType[label].right++; } else if (!answered) unanswered++; else notMaster++;
+          if (mastered && wrongBookStatus(item) !== 'mastered') newlyMastered++;
           verdict.style.display = "block";
-          verdict.innerHTML = (answered ? (correct ? '✓ 回答正确' : '✗ 回答错误') : '— 未作答') + ' · 连续答对 ' + streak + '/3' + (mastered ? ' · 已掌握' : '');
+          verdict.innerHTML = '<div>' + (answered ? (correct ? '✓ 回答正确' : '✗ 回答错误') : '— 未作答') + ' · 连续答对 ' + streak + '/3' + (mastered ? ' · 已掌握' : '') + '</div>' +
+            '<div style="margin-top:6px;color:var(--itr-green);">正确答案：' + escapeHtml(assignmentRawAnswerText(res && res.correctAnswer != null ? res.correctAnswer : q.answer)) + '</div>' +
+            (q.explanation ? '<div style="margin-top:6px;">解析：' + escapeHtml(q.explanation) + '</div>' : '');
           var mb = document.createElement("div"); mb.style.marginTop = "8px"; mb.style.display = "flex"; mb.style.gap = "8px";
           mb.innerHTML = '<button type="button" class="itr-btn itr-primary" id="itr-wr-next">下一题</button>';
           verdict.appendChild(mb);
@@ -5205,8 +5277,11 @@
       $("itr-wr-stop").addEventListener("click", function () { renderWBook(); });
     }
     function finish() {
+      var total = queue.length, pct = total ? Math.round(master * 100 / total) : 0;
+      var typeRows = Object.keys(byType).map(function (label) { var row = byType[label]; return '<span class="itr-warticle-tag">' + escapeHtml(label) + ' ' + row.right + '/' + row.total + '</span>'; }).join(' ');
+      var latest = getWBook(), remaining = context && context.groupId ? latest.filter(function (item, index) { return wrongArticleGroupId(item, index) === context.groupId && wrongBookStatus(item) !== 'mastered'; }).length : latest.filter(function (item) { return wrongBookStatus(item) !== 'mastered'; }).length;
       panel.innerHTML = '<div class="itr-book-head"><h3>' + ICONS.refresh + ' 重做完成</h3><span class="spacer"></span><button type="button" class="itr-link" id="itr-wbook-back">返回</button></div>' +
-        '<div class="itr-book-empty">本轮重做 ' + queue.length + ' 题：答对 ' + master + '，答错 ' + notMaster + '，未作答 ' + unanswered + '。连续答对 3 次由服务器标记为已掌握。</div>';
+        '<div class="itr-review-card"><h3 style="margin-top:0;">' + escapeHtml(context && context.title || '本轮错题') + '复习报告</h3><div style="font-size:28px;font-weight:800;color:var(--itr-primary);">正确率 ' + pct + '%</div><p>共 ' + total + ' 题：答对 ' + master + '，答错 ' + notMaster + '，未作答 ' + unanswered + '。</p><div class="itr-warticle-meta">' + typeRows + '</div><p>本轮新掌握 ' + newlyMastered + ' 题，仍有 ' + remaining + ' 题待巩固。连续答对 3 次由服务器标记为已掌握。</p></div>';
       $("itr-wbook-back").addEventListener("click", function () { renderWBook(); });
     }
     show();
@@ -5999,11 +6074,11 @@
     } else {
       defs = [
         { pane: "practice", label: ICONS.pencil + " 练习答题" },
-        { pane: "library", label: ICONS.book + " 文章资源" },
-        { pane: "grades", label: ICONS.trend + " 成绩档案" },
+        { pane: "assignments", label: ICONS.clip + ' 题卡作业 <span class="itr-assignment-unread" id="itr-assignment-tab-badge" style="display:none;">0</span>' },
         { pane: "wbook", label: ICONS.clip + " 错题复习" },
+        { pane: "library", label: ICONS.book + " 文章资源" },
         { pane: "vbook", label: ICONS.bookmark + " 词汇复习" },
-        { pane: "assignments", label: ICONS.clip + ' 题卡作业 <span class="itr-assignment-unread" id="itr-assignment-tab-badge" style="display:none;">0</span>' }
+        { pane: "grades", label: ICONS.trend + " 成绩档案" }
       ];
     }
     defs.forEach(function (t) {

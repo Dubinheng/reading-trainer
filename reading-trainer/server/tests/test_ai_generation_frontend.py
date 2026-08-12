@@ -320,6 +320,15 @@ def test_teacher_and_student_top_tabs_have_role_scoped_defs():
     assert 'pane: "vbook"' in student_block
     assert 'pane: "assignments"' in student_block
     assert 'pane: "library"' in student_block
+    student_order = [
+        student_block.index('pane: "practice"'),
+        student_block.index('pane: "assignments"'),
+        student_block.index('pane: "wbook"'),
+        student_block.index('pane: "library"'),
+        student_block.index('pane: "vbook"'),
+        student_block.index('pane: "grades"'),
+    ]
+    assert student_order == sorted(student_order)
     # Teacher navigation is intentionally a short, dedicated set.
     assert 'defs = [' in build and 'pane: "library"' in build
     assert 'tabGroup.className = "itr-tab-main"' in build
@@ -376,6 +385,20 @@ def test_wrong_review_posts_server_review_and_no_local_box_mutation():
     assert "res && res.answered != null" in wrong
     assert "saveWBook" not in source
     assert "item.box =" in _function_source(source, "vocabReview", "bookKey")
+
+
+def test_wrong_book_groups_by_article_and_opens_article_review():
+    source = FRONTEND.read_text(encoding="utf-8")
+    render = _function_source(source, "renderWBook", "renderWrongArticle")
+    detail = _function_source(source, "renderWrongArticle", "wrongReview")
+    review = _function_source(source, "wrongReview", "getStudents")
+    assert "wrongArticleGroups(book, 'pending')" in render
+    assert "待巩固文章" in render and "已掌握文章" in render
+    assert "查看并重做本篇错题" in render
+    assert "重做本篇错题" in detail
+    assert "group.items.map" in detail
+    assert "正确率 " in review
+    assert "newlyMastered" in review and "byType" in review
 
 
 def test_review_assignment_submit_and_vocabulary_report_contract():

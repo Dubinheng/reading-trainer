@@ -1336,8 +1336,60 @@ def test_legacy_wbook_read_fills_metadata_without_dropping_fields(tmp_path):
     assert loaded[0]["errorCount"] == 0
     assert loaded[0]["unansweredCount"] == 0
     assert loaded[0]["masteryStreak"] == 0
+    assert loaded[0]["articleGroupId"].startswith("wba_")
+    assert loaded[0]["articleTitle"] == "未命名文章"
+    assert loaded[0]["articleExcerpt"] == "keep me"
     persisted = client.get("/reading-trainer/api/v2/data/wbook").get_json()["data"]
     assert persisted[0]["id"] == loaded[0]["id"]
+
+
+def test_wbook_server_groups_same_article_across_sources(tmp_path):
+    app = make_app(tmp_path)
+    client = app.test_client()
+    register(client, "article-group-student")
+    article = "Moon Habitats\nPeople may one day live on the Moon."
+    first = client.post(
+        "/reading-trainer/api/v2/wbook/items",
+        json={
+            "sourceType": "practice",
+            "article": article,
+            "articleGroupId": "forged-group",
+            "articleTitle": "Forged title",
+            "q": {"id": "article-q1", "prompt": "Question one", "answer": "A"},
+            "userAnswer": "B",
+            "attemptId": "article-a1",
+        },
+    )
+    second = client.post(
+        "/reading-trainer/api/v2/wbook/items",
+        json={
+            "sourceType": "review",
+            "article": "Moon Habitats\r\nPeople may one day live on the Moon.",
+            "q": {"id": "article-q2", "prompt": "Question two", "answer": "C"},
+            "userAnswer": "D",
+            "attemptId": "article-a2",
+        },
+    )
+    different = client.post(
+        "/reading-trainer/api/v2/wbook/items",
+        json={
+            "sourceType": "practice",
+            "article": "Ocean Cities\nA different article.",
+            "q": {"id": "article-q3", "prompt": "Question three", "answer": "A"},
+            "userAnswer": "B",
+            "attemptId": "article-a3",
+        },
+    )
+    assert first.status_code == second.status_code == different.status_code == 200
+    first_item = first.get_json()["item"]
+    second_item = second.get_json()["item"]
+    different_item = different.get_json()["item"]
+    assert first_item["articleGroupId"].startswith("wba_")
+    assert first_item["articleGroupId"] != "forged-group"
+    assert first_item["articleGroupId"] == second_item["articleGroupId"]
+    assert first_item["articleGroupId"] != different_item["articleGroupId"]
+    assert first_item["articleTitle"] == "Moon Habitats"
+    assert "People may one day" in first_item["articleExcerpt"]
 
 
 def test_wbook_attempt_idempotency_streak_reset_and_teacher_review_forbidden(tmp_path):
