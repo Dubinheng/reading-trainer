@@ -1271,6 +1271,7 @@ def test_wrongbook_item_api_is_server_confirmed_idempotent_and_scoped(tmp_path):
     assert retry.status_code == 200
     assert retry.get_json()["created"] is False
     assert len(retry.get_json()["data"]) == 1
+    assert retry.get_json()["item"]["errorCount"] == 1
     assert retry.get_json()["state"]["userData"][student_id]["wbook"] == retry.get_json()["data"]
 
     # Recipient validation happens even when the caller is authenticated.
@@ -1316,3 +1317,215 @@ def test_wrongbook_item_api_is_server_confirmed_idempotent_and_scoped(tmp_path):
     assert replay["tables"]["wbook"]["creates"] == []
     assert replay["tables"]["wbook"]["updates"][0]["business_key"] == wbook_rows[0]["business_key"]
     assert replay["totals"]["deletes"] == 0
+
+
+def test_legacy_wbook_read_fills_metadata_without_dropping_fields(tmp_path):
+    app = make_app(tmp_path)
+    client = app.test_client()
+    register(client, "legacy-wbook")
+    user_id = client.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    store = app.extensions["reading_trainer_v2"]["store"]
+    legacy = [{"q": {"id": "legacy-q", "prompt": "keep me", "answer": "A"}, "custom": {"x": 1}, "userAnswer": "B"}]
+    store.put_document(user_id, "wbook", legacy)
+    loaded = store.get_document(user_id, "wbook", [])
+    assert loaded[0]["q"]["prompt"] == "keep me"
+    assert loaded[0]["custom"] == {"x": 1}
+    assert loaded[0]["userAnswer"] == "B"
+    assert loaded[0]["id"]
+    assert loaded[0]["status"] == "pending"
+    assert loaded[0]["errorCount"] == 0
+    assert loaded[0]["unansweredCount"] == 0
+    assert loaded[0]["masteryStreak"] == 0
+    persisted = client.get("/reading-trainer/api/v2/data/wbook").get_json()["data"]
+    assert persisted[0]["id"] == loaded[0]["id"]
+
+
+def test_wbook_attempt_idempotency_streak_reset_and_teacher_review_forbidden(tmp_path):
+    app = make_app(tmp_path)
+    student = app.test_client()
+    teacher = app.test_client()
+    register(student, "progress-student")
+    register(teacher, "progress-teacher", role="teacher", password="teacher-password")
+    question = {"id": "progress-q", "type": "multiple-choice", "prompt": "p", "answer": "A"}
+    first = student.post("/reading-trainer/api/v2/wbook/items", json={"q": question, "userAnswer": "B", "attemptId": "a1"})
+    assert first.status_code == 200
+    assert first.get_json()["item"]["errorCount"] == 1
+    retry = student.post("/reading-trainer/api/v2/wbook/items", json={"q": question, "userAnswer": "B", "attemptId": "a1"})
+    assert retry.get_json()["item"]["errorCount"] == 1
+    second = student.post("/reading-trainer/api/v2/wbook/items", json={"q": question, "userAnswer": "B", "attemptId": "a2"})
+    assert second.get_json()["item"]["errorCount"] == 2
+    # Generated practices restart numbering at Q1. Distinct question content
+    # with the same display number must remain two independent wrong items.
+    other_question = {"id": "progress-q", "type": "multiple-choice", "prompt": "different", "answer": "B"}
+    other = student.post(
+        "/reading-trainer/api/v2/wbook/items",
+        json={"q": other_question, "userAnswer": "A", "attemptId": "other-1"},
+    )
+    assert other.status_code == 200 and len(other.get_json()["data"]) == 2
+    unanswered = student.post(
+        "/reading-trainer/api/v2/wbook/items",
+        json={"q": question, "userAnswer": "（未作答）", "answered": False, "attemptId": "a3"},
+    )
+    assert unanswered.get_json()["item"]["unansweredCount"] == 1
+    assert unanswered.get_json()["item"]["errorCount"] == 2
+    item_id = unanswered.get_json()["item"]["id"]
+    for _ in range(3):
+        reviewed = student.post(f"/reading-trainer/api/v2/wbook/items/{item_id}/review", json={"answer": "A"})
+        assert reviewed.status_code == 200
+    mastered = reviewed.get_json()["item"]
+    assert mastered["status"] == "mastered" and mastered["masteryStreak"] == 3
+    re_error = student.post("/reading-trainer/api/v2/wbook/items", json={"q": question, "userAnswer": "B", "attemptId": "a4"})
+    assert re_error.get_json()["item"]["status"] == "pending"
+    assert re_error.get_json()["item"]["masteryStreak"] == 0
+    assert teacher.post(f"/reading-trainer/api/v2/wbook/items/{item_id}/review", json={"answer": "A"}).status_code == 403
+
+
+def test_wbook_capacity_keeps_latest_150(tmp_path):
+    app = make_app(tmp_path)
+    client = app.test_client()
+    register(client, "capacity-student")
+    for index in range(151):
+        response = client.post(
+            "/reading-trainer/api/v2/wbook/items",
+            json={"q": {"id": f"capacity-{index}", "prompt": str(index), "answer": "A"}, "userAnswer": "B", "attemptId": str(index)},
+        )
+        assert response.status_code == 200
+    items = client.get("/reading-trainer/api/v2/data/wbook").get_json()["data"]
+    assert len(items) == 150
+    ids = {item["q"]["id"] for item in items}
+    assert "capacity-150" in ids and "capacity-0" not in ids
+
+
+def _seed_review_class(app, teacher, source, peer, cross):
+    store = app.extensions["reading_trainer_v2"]["store"]
+    teacher_id = teacher.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    ids = {
+        name: client.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+        for name, client in (("source", source), ("peer", peer), ("cross", cross))
+    }
+    for name, username in (("source", "review-source"), ("peer", "review-peer"), ("cross", "review-cross")):
+        current = store.get_user(ids[name])
+        store.upsert_user({**current, "created_by": teacher_id, "class_id": "class-a" if name != "cross" else "class-b"})
+    store.upsert_class({"id": "class-a", "teacherId": teacher_id, "name": "A"})
+    other_teacher_id = "teacher-other"
+    store.upsert_class({"id": "class-b", "teacherId": other_teacher_id, "name": "B"})
+    return store, teacher_id, ids
+
+
+def test_review_assignment_selection_privacy_classes_and_source_metadata(tmp_path):
+    app = make_app(tmp_path)
+    teacher, source, peer, cross = (app.test_client() for _ in range(4))
+    register(teacher, "review-teacher", role="teacher", password="teacher-password")
+    register(source, "review-source")
+    register(peer, "review-peer")
+    register(cross, "review-cross")
+    store, teacher_id, ids = _seed_review_class(app, teacher, source, peer, cross)
+    source.post("/reading-trainer/api/v2/wbook/items", json={"q": {"id": "rq", "prompt": "prompt", "answer": "A"}, "userAnswer": "B", "attemptId": "src"})
+    source.post("/reading-trainer/api/v2/vbook/items", json={"id": "rv", "word": "term", "zh": "中文", "pos": "n.", "ctx": "context"})
+    item = source.get("/reading-trainer/api/v2/data/wbook").get_json()["data"][0]
+    vocab = source.get("/reading-trainer/api/v2/data/vbook").get_json()["data"][0]
+    assert teacher.post("/reading-trainer/api/v2/assignments/review", json={"sourceStudentId": ids["source"], "studentIds": [ids["source"]]}).status_code == 400
+    created = teacher.post(
+        "/reading-trainer/api/v2/assignments/review",
+        json={"sourceStudentId": ids["source"], "wrongItemIds": [item["id"]], "vocabItemIds": [vocab["id"]], "studentIds": [ids["source"], ids["peer"]], "title": "Review"},
+    )
+    assert created.status_code == 201
+    assignment = created.get_json()["assignment"]
+    assert assignment["assignmentType"] == "review"
+    assert assignment["sourceStudentId"] == ids["source"]
+    assert assignment["settings"]["sourceStudentId"] == ids["source"]
+    question_item, vocab_item = assignment["reviewItems"]
+    assert "userAnswer" not in question_item and "errorCount" not in question_item
+    assert vocab_item["zh"] == "中文" and vocab_item["pos"] == "n." and vocab_item["ctx"] == "context"
+    assignment_id = assignment["id"]
+    student_view = source.get(f"/reading-trainer/api/v2/assignments/{assignment_id}").get_json()["assignment"]
+    assert "sourceStudentId" not in student_view.get("settings", {})
+    assert teacher.post(
+        "/reading-trainer/api/v2/assignments/review",
+        json={"sourceStudentId": ids["source"], "wrongItemIds": [item["id"]], "vocabItemIds": [], "studentIds": [ids["source"], ids["cross"]]},
+    ).status_code == 403
+    # An unassigned source may only receive its own review.
+    current = store.get_user(ids["source"])
+    store.upsert_user({**current, "class_id": None})
+    assert teacher.post(
+        "/reading-trainer/api/v2/assignments/review",
+        json={"sourceStudentId": ids["source"], "wrongItemIds": [item["id"]], "vocabItemIds": [], "studentIds": [ids["peer"]]},
+    ).status_code == 403
+
+
+def test_review_submit_report_vocab_linkage_and_repeat_is_idempotent(tmp_path):
+    app = make_app(tmp_path)
+    teacher, source = app.test_client(), app.test_client()
+    register(teacher, "report-teacher", role="teacher", password="teacher-password")
+    register(source, "report-source")
+    store = app.extensions["reading_trainer_v2"]["store"]
+    tid = teacher.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    sid = source.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    current = store.get_user(sid)
+    store.upsert_user({**current, "created_by": tid, "class_id": "report-class"})
+    store.upsert_class({"id": "report-class", "teacherId": tid, "name": "Report"})
+    source.post("/reading-trainer/api/v2/wbook/items", json={"q": {"id": "report-q", "prompt": "p", "answer": "A", "type": "multiple-choice"}, "userAnswer": "B", "attemptId": "a"})
+    source.post("/reading-trainer/api/v2/vbook/items", json={"id": "report-v", "word": "word", "zh": "中文"})
+    q = source.get("/reading-trainer/api/v2/data/wbook").get_json()["data"][0]
+    v = source.get("/reading-trainer/api/v2/data/vbook").get_json()["data"][0]
+    created = teacher.post("/reading-trainer/api/v2/assignments/review", json={"sourceStudentId": sid, "wrongItemIds": [q["id"]], "vocabItemIds": [v["id"]], "studentIds": [sid]})
+    aid = created.get_json()["assignment"]["id"]
+    first = source.post(f"/reading-trainer/api/v2/assignments/{aid}/submit", json={"answers": {q["id"]: "B"}, "viewedVocabIds": []})
+    assert first.status_code == 200
+    report = first.get_json()["result"]
+    assert report["wrongCount"] == 1 and report["unanswered"] == 0
+    assert report["vocabulary"]["viewed"] == 0 and report["vocabulary"]["unviewed"] == 1
+    assert len(source.get("/reading-trainer/api/v2/data/wbook").get_json()["data"]) == 1
+    second = source.post(f"/reading-trainer/api/v2/assignments/{aid}/submit", json={"answers": {q["id"]: "A"}, "viewedVocabIds": [v["id"]]})
+    assert second.status_code == 200 and second.get_json()["idempotent"] is True
+    assert len(source.get("/reading-trainer/api/v2/data/wbook").get_json()["data"]) == 1
+    grades_before = source.get("/reading-trainer/api/v2/data/grades").get_json()["data"]
+    vocab_only = teacher.post(
+        "/reading-trainer/api/v2/assignments/review",
+        json={"sourceStudentId": sid, "wrongItemIds": [], "vocabItemIds": [v["id"]], "studentIds": [sid]},
+    ).get_json()["assignment"]
+    vocab_submit = source.post(
+        f"/reading-trainer/api/v2/assignments/{vocab_only['id']}/submit",
+        json={"answers": {}, "viewedVocabIds": [v["id"]]},
+    )
+    assert vocab_submit.status_code == 200
+    assert vocab_submit.get_json()["result"]["total"] == 0
+    assert source.get("/reading-trainer/api/v2/data/grades").get_json()["data"] == grades_before
+
+
+def test_review_question_check_uses_first_attempt_and_question_card_default(tmp_path):
+    app = make_app(tmp_path)
+    teacher, source = app.test_client(), app.test_client()
+    register(teacher, "check-teacher", role="teacher", password="teacher-password")
+    register(source, "check-source")
+    store = app.extensions["reading_trainer_v2"]["store"]
+    tid = teacher.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    sid = source.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    current = store.get_user(sid)
+    store.upsert_user({**current, "created_by": tid, "class_id": "check-class"})
+    store.upsert_class({"id": "check-class", "teacherId": tid, "name": "Check"})
+    source.post("/reading-trainer/api/v2/wbook/items", json={"q": {"id": "check-q", "prompt": "p", "answer": "A"}, "userAnswer": "B", "attemptId": "a"})
+    q = source.get("/reading-trainer/api/v2/data/wbook").get_json()["data"][0]
+    assignment = teacher.post("/reading-trainer/api/v2/assignments/review", json={"sourceStudentId": sid, "wrongItemIds": [q["id"]], "studentIds": [sid]}).get_json()["assignment"]
+    aid = assignment["id"]
+    checked = source.post(f"/reading-trainer/api/v2/assignments/{aid}/questions/{q['id']}/check", json={"answer": "B"})
+    assert checked.status_code == 200 and checked.get_json()["correct"] is False
+    assert source.post(f"/reading-trainer/api/v2/assignments/{aid}/questions/{q['id']}/check", json={"answer": "A"}).get_json()["idempotent"] is True
+    submitted = source.post(f"/reading-trainer/api/v2/assignments/{aid}/submit", json={"answers": {q["id"]: "A"}})
+    assert submitted.get_json()["result"]["wrongCount"] == 1
+    card = teacher.post("/reading-trainer/api/v2/assignments", json={"id": "old-card", "title": "Old", "questions": [{"id": "q", "answer": "A"}], "studentIds": [sid]})
+    assert card.status_code == 201 and card.get_json()["assignment"]["assignmentType"] == "question_card"
+
+
+def test_teacher_can_read_but_not_write_student_business_document(tmp_path):
+    app = make_app(tmp_path)
+    teacher, student = app.test_client(), app.test_client()
+    register(teacher, "readonly-teacher", role="teacher", password="teacher-password")
+    register(student, "readonly-student")
+    store = app.extensions["reading_trainer_v2"]["store"]
+    tid = teacher.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    sid = student.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    current = store.get_user(sid)
+    store.upsert_user({**current, "created_by": tid})
+    assert teacher.get(f"/reading-trainer/api/v2/data/vbook/{sid}").status_code == 200
+    assert teacher.put(f"/reading-trainer/api/v2/data/vbook/{sid}", json={"data": [{"word": "blocked"}]}).status_code == 403

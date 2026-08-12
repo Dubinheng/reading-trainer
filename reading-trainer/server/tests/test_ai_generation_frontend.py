@@ -239,7 +239,7 @@ def test_student_personal_diagnosis_uses_shared_grade_dimensions():
     assert "能力与题型" in diagnosis_source
     assert "练习记录" in diagnosis_source
     assert "currentUser.role === 'student'" in render_source
-    assert "renderStudentDiagnosis(panel)" in render_source
+    assert "renderStudentDiagnosis(panel, currentUser.id" in render_source
     assert "DIAGNOSIS_ABILITIES" in source
     assert "证据定位" in source
     assert "source: 'practice'" in grade_source
@@ -292,3 +292,103 @@ def test_pdf_export_has_watermark_controls_and_no_heading_answer_leak():
     assert "请减少题目或拆分试卷" in source
     assert "escapeHtml(it.heading)" not in worksheet_source
     assert "headingOptionValue(q.answer" not in worksheet_source
+
+
+def test_vocab_selection_is_shared_and_server_confirmed():
+    source = FRONTEND.read_text(encoding="utf-8")
+    assert "function normalizeVocabSelection(" in source
+    assert "selectionFromArticleSource" in source
+    assert "practiceVocabOwnerIds" in source
+    assert "POST /vbook/items" in source
+    assert "res.ok !== true" in _function_source(source, "addVocabToBook", "renderVBook")
+    assert "getTargetStudentIds()" not in _function_source(source, "addSelectionToVBook", "doVocabExtract")
+
+
+def test_teacher_and_student_top_tabs_have_role_scoped_defs():
+    source = FRONTEND.read_text(encoding="utf-8")
+    build = _function_source(source, "buildTabs", "switchTab")
+    teacher_block, student_block = build.split("} else {", 1)
+    assert 'currentRole === "teacher"' in build
+    assert 'pane: "teacher"' in teacher_block
+    assert 'pane: "grades"' not in teacher_block
+    assert 'pane: "wbook"' not in teacher_block
+    assert 'pane: "vbook"' not in teacher_block
+    assert 'pane: "library"' in teacher_block
+    assert 'pane: "grades"' in student_block
+    assert 'pane: "wbook"' in student_block
+    assert 'pane: "vbook"' in student_block
+    assert 'pane: "assignments"' in student_block
+    assert 'pane: "library"' in student_block
+    # Teacher navigation is intentionally a short, dedicated set.
+    assert 'defs = [' in build and 'pane: "library"' in build
+
+
+def test_teacher_detail_tabs_use_scoped_ids_and_bind_once():
+    source = FRONTEND.read_text(encoding="utf-8")
+    assert 'data-tc-tab="score"' in source
+    assert 'data-tc-tab="wrong"' in source
+    assert 'data-tc-tab="vocab"' in source
+    assert 'data-tc-tab="tasks"' in source
+    detail = _function_source(source, "selectTeacherStudent", "renderTCScorePanel")
+    assert "data-bound" in detail
+    assert "tabsContainer.parentNode.querySelectorAll" in detail
+    assert "tc-panel-' + t.getAttribute('data-tc-tab')" in detail
+
+
+def test_teacher_score_uses_pct_and_ts_and_wrong_book_user_answer():
+    source = FRONTEND.read_text(encoding="utf-8")
+    score = _function_source(source, "renderTCScorePanel", "renderTCWrongPanel")
+    wrong = _function_source(source, "renderTCWrongPanel", "renderTCVocabPanel")
+    assert "renderStudentDiagnosis(panel, studentId, { readonly: true })" in score
+    assert "g.score" not in score
+    assert "g.date" not in score
+    assert "item.userAnswer" in wrong
+    assert "data-tc-wrong" in wrong
+    assert "data-tc-vocab" in _function_source(source, "renderTCVocabPanel", "renderTCTasksPanel")
+
+
+def test_wrong_review_posts_server_review_and_no_local_box_mutation():
+    source = FRONTEND.read_text(encoding="utf-8")
+    wrong = _function_source(source, "wrongReview", "getStudents")
+    assert "/wbook/items/" in wrong
+    assert "/review" in wrong
+    assert "masteryStreak" in wrong
+    assert "answered" in wrong
+    assert "res && res.correct === true" in wrong
+    assert "res && res.answered != null" in wrong
+    assert "saveWBook" not in source
+    assert "item.box =" in _function_source(source, "vocabReview", "bookKey")
+
+
+def test_review_assignment_submit_and_vocabulary_report_contract():
+    source = FRONTEND.read_text(encoding="utf-8")
+    review_question = _function_source(source, "assignmentReviewQuestion", "assignmentIsReview")
+    assert "question.id = reviewId" in review_question
+    assert "question.questionId = reviewId" in review_question
+    assert "assignmentType" in source
+    assert "reviewItems" in source
+    assert "viewedVocabIds" in _function_source(source, "submitAssignmentAnswers", "assignmentArticleEntries")
+    render_answer = _function_source(source, "renderAssignmentAnswer", "openAssignment")
+    assert "completedViewedIds" in render_answer
+    assert "viewed ? '已查看' : '未查看'" in render_answer
+    report = _function_source(source, "renderAssignmentResult", "collectAssignmentAnswer")
+    assert "vocabulary" in report
+    assert "sharedTotal === 0" in report
+    assert "不计入阅读题正确率或成绩趋势" in report
+    assert "未查看" in source
+    composer = _function_source(source, "openTeacherReviewComposer", "getWBookForStudent")
+    assert "apiV2('/assignments/review'" in composer
+    assert "sourceStudentId" in composer and "wrongItemIds" in composer and "vocabItemIds" in composer
+    assert "reviewRequestId = uid('review')" in composer
+    assert "assignmentSendResponseConfirmed(res, reviewRequestId, ids)" in composer
+    assert "sourceClass ? getStudentsByTeacher" in composer
+
+
+def test_practice_attempt_id_and_server_wrong_item_payload():
+    source = FRONTEND.read_text(encoding="utf-8")
+    grade = _function_source(source, "gradeAll", "assignmentResponseResult")
+    add = _function_source(source, "addWrongToBook", "wrongItemId")
+    assert "practiceAttemptId" in grade
+    assert "attemptId" in add
+    assert "userAnswer" in add
+    assert "apiV2('/wbook/items'" in add
