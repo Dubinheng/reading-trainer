@@ -314,6 +314,7 @@ def test_teacher_and_student_top_tabs_have_role_scoped_defs():
     assert 'pane: "wbook"' not in teacher_block
     assert 'pane: "vbook"' not in teacher_block
     assert 'pane: "library"' in teacher_block
+    assert 'id: "itr-teacher-tab"' in teacher_block
     assert 'pane: "grades"' in student_block
     assert 'pane: "wbook"' in student_block
     assert 'pane: "vbook"' in student_block
@@ -321,6 +322,20 @@ def test_teacher_and_student_top_tabs_have_role_scoped_defs():
     assert 'pane: "library"' in student_block
     # Teacher navigation is intentionally a short, dedicated set.
     assert 'defs = [' in build and 'pane: "library"' in build
+
+
+def test_teacher_practice_has_no_vocab_or_wrongbook_controls():
+    source = FRONTEND.read_text(encoding="utf-8")
+    render_question = _function_source(source, "renderQuestion", "checkQuestion")
+    render_cards = _function_source(source, "renderCards", "renderWorksheet")
+    grade = _function_source(source, "gradeAll", "assignmentResponseResult")
+    assert 'data-itr-role="teacher"' in source
+    assert 'id="itr-vocab-btn"' in source
+    assert 'id="itr-add-sel-vocab"' in source
+    assert "options.hideVocab ? ''" in render_question
+    assert 'hideVocab: !!(currentUser && currentUser.role === "teacher")' in render_cards
+    assert "if (!currentUser || currentUser.role !== 'teacher') wrongs.forEach" in grade
+    assert "enableWrongBook: !currentUser || currentUser.role !== 'teacher'" in grade
 
 
 def test_teacher_detail_tabs_use_scoped_ids_and_bind_once():

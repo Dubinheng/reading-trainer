@@ -759,6 +759,13 @@
   #itr-app .itr-tab:hover { border-color: var(--itr-accent); }
   #itr-app .itr-tab.active { background: var(--itr-primary-soft); color: var(--itr-primary-on-soft); border-color: var(--itr-primary); font-weight: 700; }
   #itr-app .itr-tab-ghost { margin-left: auto; background: transparent; color: var(--itr-muted); font-weight: 500; }
+  /* Teachers prepare/send work here; vocabulary controls stay in student and
+     assignment flows. */
+  #itr-app[data-itr-role="teacher"] [data-pane="practice"] #itr-vocab-btn,
+  #itr-app[data-itr-role="teacher"] [data-pane="practice"] #itr-add-sel-vocab,
+  #itr-app[data-itr-role="teacher"] [data-pane="practice"] .itr-article-vocab-add,
+  #itr-app[data-itr-role="teacher"] [data-pane="practice"] .itr-q-vocab-add,
+  #itr-app[data-itr-role="teacher"] [data-pane="practice"] .itr-article-tools { display:none !important; }
   #itr-app .itr-pane { display: none; }
   #itr-app .itr-pane.active { display: block; }
   #itr-app .itr-pane.active .itr-lib-panel,
@@ -2958,7 +2965,7 @@
     var cardSource = q.article || q.passage || q.sourceText || q.source_text || '';
     if (cardSource) {
       html += '<div class="itr-q-source"><div class="itr-article" data-q-source="1">' + splitParagraphs(String(cardSource)).map(function (p) { return '<p>' + escapeHtml(p) + '</p>'; }).join('') + '</div>' +
-        '<div class="itr-article-tools"><button type="button" class="itr-btn itr-ghost itr-q-vocab-add">添加选中生词</button><span class="itr-hint">选中题卡原文中的英文词组后保存。</span></div></div>';
+        (options.hideVocab ? '' : '<div class="itr-article-tools"><button type="button" class="itr-btn itr-ghost itr-q-vocab-add">添加选中生词</button><span class="itr-hint">选中题卡原文中的英文词组后保存。</span></div>') + '</div>';
     }
     html += '<div class="itr-q-body">' + escapeHtml(q.prompt).replace(/\n/g, "<br>") + "</div>";
     if (q.type === "multiple-choice" || q.type === "vocabulary") {
@@ -3229,7 +3236,7 @@
       h += '</ul>';
     }
     if (unanswered > 0) h += '<div style="margin-top:6px;">有 ' + unanswered + ' 题未作答——考试中即使不确定也应先猜一个答案，避免白丢分。</div>';
-    if (wrongs.length) h += '<div style="margin-top:6px;">' + ICONS.clip + ' 本次 ' + wrongs.length + ' 道错题已自动存入「' + ICONS.clip + ' 错题记录」，点下方按钮可随时重做巩固（连续答对 3 次转为已掌握并保留历史）。</div>';
+    if (wrongs.length && report.enableWrongBook !== false) h += '<div style="margin-top:6px;">' + ICONS.clip + ' 本次 ' + wrongs.length + ' 道错题已自动存入「' + ICONS.clip + ' 错题记录」，点下方按钮可随时重做巩固（连续答对 3 次转为已掌握并保留历史）。</div>';
     if (report.stuLabel) h += '<div style="margin-top:6px;">' + ICONS.trend + ' 本次成绩已计入「' + escapeHtml(report.stuLabel) + '」的成绩档案。点顶部「' + ICONS.trend + ' 成绩档案」可查看独立曲线。</div>';
     if (report.adaptNote) h += report.adaptNote;
     h += '</div></div></div>';
@@ -3329,7 +3336,7 @@
     var wrongs = records.filter(function (r) { return !r.correct; });
     // persist wrong answers into the wrong book for later review (per selected student)
     var wrongWrites = [];
-    wrongs.forEach(function (r) {
+    if (!currentUser || currentUser.role !== 'teacher') wrongs.forEach(function (r) {
       if (r.q && r.q.prompt) {
         var art = sections[r.sec] ? sections[r.sec].article : "";
         targetIds.forEach(function (sid) { wrongWrites.push(addWrongToBook(r, art, sid, attemptId)); });
@@ -3407,7 +3414,7 @@
     // The calculations and persistence above remain practice-specific, while
     // the visible score table has one source of truth.
     var sharedStuLabel = (targetIds.length > 1) ? (targetIds.length + " 名学生") : ((stu.name || "学生") + "（" + stu.id + "）");
-    h = buildPracticeReportMarkup({ records: records, total: total, right: right, unanswered: unanswered, pct: pct, byType: byType, byArt: byArt, byExam: byExam, wrongs: wrongs, stuLabel: sharedStuLabel, adaptNote: adaptNote });
+    h = buildPracticeReportMarkup({ records: records, total: total, right: right, unanswered: unanswered, pct: pct, byType: byType, byArt: byArt, byExam: byExam, wrongs: wrongs, enableWrongBook: !currentUser || currentUser.role !== 'teacher', stuLabel: sharedStuLabel, adaptNote: adaptNote });
 
     // buildPracticeReportMarkup already closes the report container.
 
@@ -3708,12 +3715,12 @@
     sections.forEach(function (sec, si) {
       if (sections.length > 1) html += '<div class="itr-section-title">' + ICONS.file + ' 文章 ' + (si + 1) + "</div>";
       if (showArticle === "yes") html += '<div class="itr-card itr-article-card"><label>原文</label>' + renderArticle(sec.article) +
-        '<div class="itr-article-tools"><button type="button" class="itr-btn itr-ghost itr-article-vocab-add" data-article-index="' + si + '">添加选中生词</button><span class="itr-hint">选中原文中的 1–5 个英文单词（最多80字符）后保存。</span></div></div>';
+        (currentUser && currentUser.role === "teacher" ? '' : '<div class="itr-article-tools"><button type="button" class="itr-btn itr-ghost itr-article-vocab-add" data-article-index="' + si + '">添加选中生词</button><span class="itr-hint">选中原文中的 1–5 个英文单词（最多80字符）后保存。</span></div>') + '</div>';
       html += '<div class="itr-toolbar"><strong>文章 ' + (si + 1) + "：" + sec.questions.length + ' 道题</strong>';
       html += '<button type="button" class="itr-link" data-show="' + si + '">显示本组答案</button>';
       html += '<button type="button" class="itr-link" data-check="' + si + '">核对本组</button></div>';
       html += '<div class="itr-qlist">';
-      sec.questions.forEach(function (q) { html += renderQuestion(q); });
+      sec.questions.forEach(function (q) { html += renderQuestion(q, { hideVocab: !!(currentUser && currentUser.role === "teacher") }); });
       html += "</div>";
       total += sec.questions.length;
     });
@@ -5979,7 +5986,9 @@
       defs = [
         { pane: "practice", label: ICONS.pencil + " 练习答题" },
         { pane: "library", label: ICONS.book + " 文章资源" },
-        { pane: "teacher", label: ICONS.teacher + " 教师中心" }
+        // Keep the center in the third slot, directly after article resources;
+        // teacher navigation has no student book tabs in between.
+        { pane: "teacher", id: "itr-teacher-tab", label: ICONS.teacher + " 教师中心" }
       ];
     } else {
       defs = [
@@ -5993,7 +6002,7 @@
     }
     defs.forEach(function (t) {
       var b = document.createElement("button");
-      b.type = "button"; b.className = "itr-tab"; b.setAttribute("data-pane", t.pane); b.innerHTML = t.label;
+      b.type = "button"; b.className = "itr-tab"; if (t.id) b.id = t.id; b.setAttribute("data-pane", t.pane); b.innerHTML = t.label;
       b.addEventListener("click", function () { switchTab(t.pane); });
       bar.appendChild(b);
     });
@@ -6014,6 +6023,8 @@
   function setRole(role) {
     currentRole = role; saveRole(role);
     var gate = $("itr-role-gate"), tabs = $("itr-tabs");
+    var app = $("itr-app");
+    if (app) app.setAttribute("data-itr-role", role || "");
     if (gate) gate.style.display = "none";
     if (tabs) tabs.style.display = "flex";
     var badge = $("itr-role-badge");
