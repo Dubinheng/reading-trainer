@@ -397,6 +397,9 @@ def test_wrong_book_groups_by_article_and_opens_article_review():
     assert "查看并重做本篇错题" in render
     assert "重做本篇错题" in detail
     assert "group.items.map" in detail
+    assert 'class="itr-article itr-warticle-passage"' in detail
+    assert "details.itr-warticle-passage { width:100%; max-width:none;" in source
+    assert ".itr-warticle-passage .itr-article { width:100%; max-width:none;" in source
     assert "正确率 " in review
     assert "newlyMastered" in review and "byType" in review
 

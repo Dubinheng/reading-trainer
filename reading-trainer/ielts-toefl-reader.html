@@ -377,6 +377,9 @@
   #itr-app .itr-warticle-meta { display:flex; gap:7px; flex-wrap:wrap; color:var(--itr-muted); font-size:11px; }
   #itr-app .itr-warticle-tag { display:inline-flex; align-items:center; border-radius:999px; padding:3px 8px; background:var(--itr-primary-soft); color:var(--itr-primary-on-soft); font-weight:700; }
   #itr-app .itr-warticle-actions { display:flex; align-items:center; gap:8px; margin-top:12px; }
+  #itr-app details.itr-warticle-passage { width:100%; max-width:none; box-sizing:border-box; }
+  #itr-app .itr-warticle-passage > div,
+  #itr-app .itr-warticle-passage .itr-article { width:100%; max-width:none; box-sizing:border-box; }
   #itr-app .itr-tc-readonly-hint { color:var(--itr-muted); font-size:12px; margin-bottom:8px; }
   #itr-app .itr-tc-class-filter { margin-left:auto; min-width:150px; }
   #itr-app .itr-review-vocab-item .reveal { display:none; margin:8px 0; padding:8px; border-top:1px dashed var(--itr-border); }
@@ -5199,7 +5202,7 @@
     var html = '<div class="itr-book-head"><button type="button" class="itr-link" id="itr-warticle-back">← 返回文章列表</button><h3>' + escapeHtml(group.title) + '</h3><span class="count">' + group.items.length + ' 道' + (filter === 'mastered' ? '已掌握题' : '待巩固错题') + '</span><span class="spacer"></span>';
     if (filter !== 'mastered') html += '<button type="button" class="itr-btn itr-primary" id="itr-warticle-review">' + ICONS.refresh + ' 重做本篇错题</button>';
     html += '</div>';
-    if (group.article) html += '<details class="itr-article" style="margin-bottom:12px;"><summary style="cursor:pointer;font-weight:700;">查看文章原文</summary><div style="max-height:280px;overflow:auto;margin-top:10px;">' + renderArticle(group.article) + '</div></details>';
+    if (group.article) html += '<details class="itr-article itr-warticle-passage" style="margin-bottom:12px;"><summary style="cursor:pointer;font-weight:700;">查看文章原文</summary><div style="max-height:280px;overflow:auto;margin-top:10px;">' + renderArticle(group.article) + '</div></details>';
     html += '<div class="itr-book-list">';
     group.items.forEach(function (entry, i) {
       var item = entry.item, q = normalizeAssignmentQuestion(item.q || {}, i);
