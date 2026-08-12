@@ -754,7 +754,8 @@
   #itr-app .itr-role-ico { font-size: 30px; }
   #itr-app .itr-role-name { font-weight: 700; font-size: 15px; }
   #itr-app .itr-role-desc { font-size: 12px; color: var(--itr-muted); }
-  #itr-app .itr-tabs { display: none; gap: 8px; flex-wrap: wrap; margin: 18px 0 6px; border-bottom: 1px solid var(--itr-border); padding-bottom: 10px; }
+  #itr-app .itr-tabs { display: none; gap: 8px; align-items: flex-start; flex-wrap: wrap; margin: 18px 0 6px; border-bottom: 1px solid var(--itr-border); padding-bottom: 10px; }
+  #itr-app .itr-tab-main { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; min-width: 0; }
   #itr-app .itr-tab { padding: 9px 16px; border: 1px solid var(--itr-border); background: var(--itr-card); color: var(--itr-text); border-radius: var(--itr-r-sm); cursor: pointer; font-size: 14px; font-weight: 600; transition: border-color var(--itr-duration) var(--itr-ease), background var(--itr-duration) var(--itr-ease), color var(--itr-duration) var(--itr-ease); font: inherit; }
   #itr-app .itr-tab:hover { border-color: var(--itr-accent); }
   #itr-app .itr-tab.active { background: var(--itr-primary-soft); color: var(--itr-primary-on-soft); border-color: var(--itr-primary); font-weight: 700; }
@@ -5981,6 +5982,11 @@
   function buildTabs() {
     var bar = $("itr-tabs"); if (!bar) return;
     bar.innerHTML = "";
+    // Keep all role-specific navigation in one flex item. The logout button is
+    // appended separately and may use auto margin without spreading these tabs.
+    var tabGroup = document.createElement("div");
+    tabGroup.className = "itr-tab-main";
+    bar.appendChild(tabGroup);
     var defs;
     if (currentRole === "teacher") {
       defs = [
@@ -6004,7 +6010,7 @@
       var b = document.createElement("button");
       b.type = "button"; b.className = "itr-tab"; if (t.id) b.id = t.id; b.setAttribute("data-pane", t.pane); b.innerHTML = t.label;
       b.addEventListener("click", function () { switchTab(t.pane); });
-      bar.appendChild(b);
+      tabGroup.appendChild(b);
     });
   }
   function switchTab(name) {

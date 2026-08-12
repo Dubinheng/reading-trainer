@@ -322,6 +322,9 @@ def test_teacher_and_student_top_tabs_have_role_scoped_defs():
     assert 'pane: "library"' in student_block
     # Teacher navigation is intentionally a short, dedicated set.
     assert 'defs = [' in build and 'pane: "library"' in build
+    assert 'tabGroup.className = "itr-tab-main"' in build
+    assert "tabGroup.appendChild(b);" in build
+    assert "#itr-app .itr-tab-main { display: flex; gap: 8px;" in source
 
 
 def test_teacher_practice_has_no_vocab_or_wrongbook_controls():
