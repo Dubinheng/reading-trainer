@@ -53,7 +53,9 @@ BUSINESS_SECTIONS = (
     "grades",
     "library",
 )
-ROLES = ("student", "teacher", "admin")
+ROLES = ("student", "teacher", "admin", "article_admin")
+STAFF_ROLES = ("admin", "article_admin")
+SYSTEM_ARTICLE_SEED_META = "system_articles_seeded_v1"
 
 # AI calls can legitimately take longer than a normal API request (especially
 # when a reading passage contains several question types), but the values are
@@ -300,7 +302,7 @@ class ReadingTrainerStore:
                 CREATE TABLE IF NOT EXISTS users (
                     id TEXT PRIMARY KEY,
                     username TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
+                    role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin', 'article_admin')),
                     password_hash TEXT NOT NULL DEFAULT '',
                     created_by TEXT,
                     class_id TEXT,
@@ -397,10 +399,66 @@ class ReadingTrainerStore:
                     data_json TEXT NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS articles (
+                    id TEXT PRIMARY KEY,
+                    scope TEXT NOT NULL CHECK (scope IN ('system', 'personal')),
+                    owner_id TEXT,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    level INTEGER NOT NULL DEFAULT 3,
+                    category TEXT NOT NULL DEFAULT '',
+                    created_by TEXT,
+                    updated_by TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    deleted_at INTEGER,
+                    deleted_by TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_articles_scope_owner
+                    ON articles(scope, owner_id, updated_at);
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    event_id TEXT PRIMARY KEY,
+                    actor_user_id TEXT,
+                    action TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    before_json TEXT,
+                    after_json TEXT,
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_audit_entity
+                    ON audit_events(entity_type, entity_id, created_at);
                 """
             )
             # The table was introduced after the first production schema.  A
             # guarded additive migration keeps an existing database usable.
+            # Older databases constrained users.role to the original three
+            # roles.  Rebuild that table once so article_admin accounts can be
+            # provisioned without touching any user data.
+            user_schema = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+            ).fetchone()
+            if user_schema and "article_admin" not in str(user_schema[0]):
+                connection.execute("ALTER TABLE users RENAME TO users_legacy_role_migration")
+                connection.execute(
+                    """CREATE TABLE users (
+                        id TEXT PRIMARY KEY,
+                        username TEXT NOT NULL,
+                        role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin', 'article_admin')),
+                        password_hash TEXT NOT NULL DEFAULT '',
+                        created_by TEXT,
+                        class_id TEXT,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        UNIQUE (username COLLATE NOCASE, role)
+                    )"""
+                )
+                connection.execute(
+                    """INSERT INTO users(id, username, role, password_hash, created_by, class_id, created_at, updated_at)
+                       SELECT id, username, role, password_hash, created_by, class_id, created_at, updated_at
+                       FROM users_legacy_role_migration"""
+                )
+                connection.execute("DROP TABLE users_legacy_role_migration")
             try:
                 connection.execute("ALTER TABLE assignments ADD COLUMN due_at INTEGER")
             except sqlite3.OperationalError as exc:
@@ -1098,7 +1156,338 @@ class ReadingTrainerStore:
                 rows = connection.execute("SELECT * FROM users WHERE role = ? ORDER BY created_at", (role,)).fetchall()
             else:
                 rows = connection.execute("SELECT * FROM users ORDER BY created_at").fetchall()
-        return [dict(row) for row in rows]
+            return [dict(row) for row in rows]
+
+    # Article resources are deliberately stored as rows rather than a single
+    # owner-scoped JSON document.  This gives every article a stable key and
+    # prevents concurrent edits from replacing an entire library.
+    @staticmethod
+    def _article_row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
+        value = dict(row)
+        return {
+            "id": value.get("id"),
+            "articleId": value.get("id"),
+            "scope": value.get("scope"),
+            "ownerId": value.get("owner_id"),
+            "title": value.get("title") or "",
+            "content": value.get("content") or "",
+            "text": value.get("content") or "",
+            "level": int(value.get("level") or 3),
+            "category": value.get("category") or "",
+            "createdBy": value.get("created_by"),
+            "updatedBy": value.get("updated_by"),
+            "createdAt": value.get("created_at"),
+            "updatedAt": value.get("updated_at"),
+            "deletedAt": value.get("deleted_at"),
+            "deletedBy": value.get("deleted_by"),
+        }
+
+    def list_articles(
+        self,
+        *,
+        principal: Mapping[str, Any] | None = None,
+        article_id: str | None = None,
+        scope: str | None = None,
+        include_deleted: bool = False,
+        query: str = "",
+    ) -> list[dict[str, Any]]:
+        principal = principal or {}
+        role = str(principal.get("role") or "")
+        if role == "article_admin" and scope == "personal":
+            return []
+        conditions = []
+        params: list[Any] = []
+        if role == "article_admin":
+            # Article administrators manage only the shared system catalogue;
+            # personal articles remain private to their owners.
+            conditions.append("scope = 'system'")
+        if article_id:
+            conditions.append("id = ?")
+            params.append(article_id)
+        if scope in ("system", "personal") and not (role == "article_admin" and scope == "personal"):
+            conditions.append("scope = ?")
+            params.append(scope)
+        if not include_deleted:
+            conditions.append("deleted_at IS NULL")
+        if role not in STAFF_ROLES:
+            conditions.append("(scope = 'system' OR (scope = 'personal' AND owner_id = ?))")
+            params.append(str(principal.get("id") or ""))
+        if query:
+            conditions.append("(title LIKE ? OR category LIKE ? OR content LIKE ?)")
+            needle = f"%{query}%"
+            params.extend([needle, needle, needle])
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM articles" + where + " ORDER BY updated_at DESC, created_at DESC",
+                params,
+            ).fetchall()
+        result = [self._article_row(row) for row in rows]
+        for item in result:
+            creator = self.get_user(str(item.get("createdBy"))) if item.get("createdBy") else None
+            updater = self.get_user(str(item.get("updatedBy"))) if item.get("updatedBy") else None
+            if creator:
+                item["createdByName"] = creator.get("username")
+            if updater:
+                item["updatedByName"] = updater.get("username")
+        if scope == "system":
+            return result
+        if article_id and result:
+            return result
+        # Preserve pre-migration favorites and teacher libraries while the
+        # one-time article migration is rolled out.  These records are read
+        # through the same permission filter and use deterministic legacy IDs;
+        # new writes always go to the articles table.
+        visible_owner_ids: list[str] = []
+        if role == "admin":
+            visible_owner_ids = [str(item.get("id")) for item in self.list_users() if item.get("role") not in STAFF_ROLES]
+        elif role in ("student", "teacher") and principal.get("id"):
+            visible_owner_ids = [str(principal.get("id"))]
+        existing_ids = {str(item.get("id")) for item in result}
+        for owner_id in visible_owner_ids:
+            for section, label in (("favorites", "个人"), ("library", "个人")):
+                legacy = self.get_document(owner_id, section, [])
+                if not isinstance(legacy, list):
+                    continue
+                for index, raw in enumerate(legacy):
+                    if not isinstance(raw, Mapping):
+                        continue
+                    legacy_id = f"legacy_{section}_{owner_id}_{index}"
+                    if article_id and legacy_id != article_id:
+                        continue
+                    if legacy_id in existing_ids:
+                        continue
+                    title = _safe_text(raw.get("title") or raw.get("name") or f"历史文章 {index + 1}", 200)
+                    content = _safe_text(raw.get("content") or raw.get("text") or raw.get("article"), 200000)
+                    if not content:
+                        continue
+                    try:
+                        legacy_level = max(1, min(5, int(raw.get("level") or 3)))
+                    except (TypeError, ValueError):
+                        legacy_level = 3
+                    raw_ts = raw.get("ts") or raw.get("createdAt") or raw.get("created_at") or _now()
+                    try:
+                        timestamp = int(float(raw_ts))
+                        if timestamp > 100000000000:
+                            timestamp //= 1000
+                    except (TypeError, ValueError):
+                        timestamp = _now()
+                    result.append({
+                        "id": legacy_id,
+                        "articleId": legacy_id,
+                        "scope": "personal",
+                        "ownerId": owner_id,
+                        "title": title,
+                        "content": content,
+                        "text": content,
+                        "level": legacy_level,
+                        "category": _safe_text(raw.get("category") or raw.get("theme") or label, 100),
+                        "createdBy": owner_id,
+                        "updatedBy": owner_id,
+                        "createdAt": timestamp,
+                        "updatedAt": timestamp,
+                        "deletedAt": None,
+                        "deletedBy": None,
+                        "legacy": True,
+                    })
+                    existing_ids.add(legacy_id)
+        return result
+
+    def get_article(self, article_id: str, *, principal: Mapping[str, Any] | None = None, include_deleted: bool = False) -> dict[str, Any] | None:
+        rows = self.list_articles(principal=principal, article_id=article_id, include_deleted=include_deleted)
+        return rows[0] if rows else None
+
+    def _audit_article(self, actor: Mapping[str, Any] | None, action: str, article_id: str, before: Any, after: Any) -> None:
+        clean_before = sanitize_json(before) if before is not None else None
+        clean_after = sanitize_json(after) if after is not None else None
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO audit_events(event_id, actor_user_id, action, entity_type, entity_id, before_json, after_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "audit_" + uuid.uuid4().hex,
+                    str(actor.get("id")) if actor else None,
+                    action,
+                    "article",
+                    str(article_id),
+                    _json_dumps(clean_before) if clean_before is not None else None,
+                    _json_dumps(clean_after) if clean_after is not None else None,
+                    _now(),
+                ),
+            )
+
+    def create_article(self, payload: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
+        role = str(actor.get("role") or "")
+        scope = _safe_text(payload.get("scope") or "personal", 20).lower()
+        if scope not in ("system", "personal"):
+            raise ValueError("invalid article scope")
+        if scope == "system" and role not in STAFF_ROLES:
+            raise PermissionError("system articles require article management permission")
+        if scope == "personal" and role not in ("student", "teacher", "admin"):
+            raise PermissionError("invalid personal article owner")
+        title = _safe_text(payload.get("title"), 200)
+        content = _safe_text(payload.get("content") or payload.get("text"), 200000)
+        category = _safe_text(payload.get("category") or payload.get("theme"), 100)
+        if not title or not content:
+            raise ValueError("title and content are required")
+        try:
+            level = max(1, min(5, int(payload.get("level") or 3)))
+        except (TypeError, ValueError):
+            level = 3
+        now = _now()
+        requested_id = _safe_text(payload.get("id") or payload.get("articleId"), 120)
+        article_id = requested_id or "article_" + uuid.uuid4().hex
+        owner_id = None if scope == "system" else str(actor.get("id"))
+        if requested_id:
+            existing = self.get_article(article_id, principal=actor)
+            if existing:
+                expected_owner = None if scope == "system" else str(actor.get("id"))
+                if existing.get("scope") == scope and existing.get("ownerId") == expected_owner:
+                    same_payload = (
+                        existing.get("title") == title
+                        and existing.get("content") == content
+                        and int(existing.get("level") or 3) == level
+                        and existing.get("category") == category
+                    )
+                    if same_payload:
+                        return existing
+                raise ValueError("article id is already in use")
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO articles(id, scope, owner_id, title, content, level, category, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (article_id, scope, owner_id, title, content, level, category, str(actor.get("id")), str(actor.get("id")), now, now),
+            )
+        article = self.get_article(article_id, principal={"id": actor.get("id"), "role": "admin"})
+        self._audit_article(actor, "create", article_id, None, article)
+        return article or {}
+
+    def seed_system_articles(self, items: Any, actor: Mapping[str, Any]) -> dict[str, Any]:
+        """Import the shipped catalogue once, using deterministic article IDs.
+
+        The marker prevents a deliberately emptied system catalogue from being
+        recreated on the next administrator login. A partially interrupted
+        first import can be retried safely because each row key is derived from
+        its content and existing rows are preserved.
+        """
+
+        if str(actor.get("role") or "") not in STAFF_ROLES:
+            raise PermissionError("system articles require article management permission")
+        if self.meta_get(SYSTEM_ARTICLE_SEED_META) == "1":
+            return {"initialized": True, "seeded": False, "created": 0}
+        if not isinstance(items, list) or not items or len(items) > 200:
+            raise ValueError("default article list is invalid")
+
+        prepared: list[dict[str, Any]] = []
+        for raw in items:
+            if not isinstance(raw, Mapping):
+                raise ValueError("default article is invalid")
+            title = _safe_text(raw.get("title"), 200)
+            content = _safe_text(raw.get("content") or raw.get("text"), 200000)
+            category = _safe_text(raw.get("category") or raw.get("theme"), 100)
+            if not title or not content:
+                raise ValueError("default article title and content are required")
+            try:
+                level = max(1, min(5, int(raw.get("level") or 3)))
+            except (TypeError, ValueError):
+                level = 3
+            fingerprint = hashlib.sha256(
+                (title + "\0" + content + "\0" + str(level) + "\0" + category).encode("utf-8")
+            ).hexdigest()[:32]
+            prepared.append(
+                {
+                    "id": "builtin_" + fingerprint,
+                    "scope": "system",
+                    "title": title,
+                    "content": content,
+                    "level": level,
+                    "category": category,
+                }
+            )
+
+        created = 0
+        for payload in prepared:
+            with self.connect() as connection:
+                existing = connection.execute(
+                    "SELECT scope FROM articles WHERE id = ?", (payload["id"],)
+                ).fetchone()
+            if existing:
+                if str(existing[0]) != "system":
+                    raise ValueError("default article id conflicts with a personal article")
+                continue
+            try:
+                self.create_article(payload, actor)
+                created += 1
+            except sqlite3.IntegrityError:
+                # A concurrent first-load seed may have inserted the same
+                # deterministic row after our read. Preserve it and continue.
+                with self.connect() as connection:
+                    existing = connection.execute(
+                        "SELECT scope FROM articles WHERE id = ?", (payload["id"],)
+                    ).fetchone()
+                if not existing or str(existing[0]) != "system":
+                    raise
+        self.meta_set(SYSTEM_ARTICLE_SEED_META, "1")
+        return {"initialized": True, "seeded": bool(created), "created": created}
+
+    def update_article(self, article_id: str, payload: Mapping[str, Any], actor: Mapping[str, Any]) -> dict[str, Any]:
+        current = self.get_article(article_id, principal=actor)
+        if not current or current.get("legacy"):
+            raise LookupError("article not found")
+        role = str(actor.get("role") or "")
+        if current.get("scope") == "system":
+            if role not in STAFF_ROLES:
+                raise PermissionError("system articles require article management permission")
+        elif current.get("ownerId") != str(actor.get("id")) and role not in STAFF_ROLES:
+            raise PermissionError("article is not owned by this user")
+        title = _safe_text(payload.get("title", current.get("title")), 200)
+        content = _safe_text(payload.get("content", payload.get("text", current.get("content"))), 200000)
+        category = _safe_text(payload.get("category", current.get("category")), 100)
+        try:
+            level = max(1, min(5, int(payload.get("level", current.get("level") or 3))))
+        except (TypeError, ValueError):
+            level = int(current.get("level") or 3)
+        if not title or not content:
+            raise ValueError("title and content are required")
+        now = _now()
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE articles SET title = ?, content = ?, level = ?, category = ?, updated_by = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+                (title, content, level, category, str(actor.get("id")), now, article_id),
+            )
+        updated = self.get_article(article_id, principal={"id": actor.get("id"), "role": "admin"})
+        self._audit_article(actor, "update", article_id, current, updated)
+        return updated or {}
+
+    def delete_article(self, article_id: str, actor: Mapping[str, Any]) -> dict[str, Any]:
+        current = self.get_article(article_id, principal=actor, include_deleted=False)
+        if not current or current.get("legacy"):
+            raise LookupError("article not found")
+        role = str(actor.get("role") or "")
+        if current.get("scope") == "system":
+            if role not in STAFF_ROLES:
+                raise PermissionError("system articles require article management permission")
+        elif current.get("ownerId") != str(actor.get("id")) and role not in STAFF_ROLES:
+            raise PermissionError("article is not owned by this user")
+        now = _now()
+        with self.connect() as connection:
+            connection.execute("UPDATE articles SET deleted_at = ?, deleted_by = ?, updated_by = ?, updated_at = ? WHERE id = ?", (now, str(actor.get("id")), str(actor.get("id")), now, article_id))
+        deleted = dict(current)
+        deleted.update({"deletedAt": now, "deletedBy": str(actor.get("id")), "updatedAt": now, "updatedBy": str(actor.get("id"))})
+        self._audit_article(actor, "delete", article_id, current, deleted)
+        return deleted
+
+    def list_audit_events(self, entity_id: str, actor: Mapping[str, Any]) -> list[dict[str, Any]]:
+        if str(actor.get("role") or "") not in STAFF_ROLES:
+            raise PermissionError("audit access denied")
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM audit_events WHERE entity_type = 'article' AND entity_id = ? ORDER BY created_at DESC", (entity_id,)).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            for key in ("before_json", "after_json"):
+                item[key[:-5]] = self._decode_json(item.get(key), None) if item.get(key) else None
+                item.pop(key, None)
+            result.append(item)
+        return result
 
     def replace_public_users(self, items: Iterable[Mapping[str, Any]]) -> None:
         incoming: set[str] = set()
@@ -1159,6 +1548,25 @@ class ReadingTrainerStore:
                 ),
             )
         return self.get_user(user_id) or {}
+
+    def create_article_admin(self, username: str, password: str, actor: Mapping[str, Any]) -> dict[str, Any]:
+        if str(actor.get("role") or "") != "admin":
+            raise PermissionError("only full administrators can create article administrators")
+        username = _safe_text(username, 120)
+        if len(username) < 2 or len(password or "") < 6:
+            raise ValueError("username or password is invalid")
+        if self.find_user(username, "article_admin"):
+            raise ValueError("username is already registered")
+        user = self.upsert_user({
+            "id": "artadm_" + uuid.uuid4().hex,
+            "username": username,
+            "role": "article_admin",
+            "password_hash": hash_password(password),
+            "created_by": str(actor.get("id")),
+            "created_at": _now(),
+        })
+        self._audit_article(actor, "create_account", str(user.get("id")), None, {"username": username, "role": "article_admin"})
+        return user
 
     def create_session(self, user_id: str) -> str:
         token = secrets.token_urlsafe(32)
@@ -2604,6 +3012,8 @@ def _stable_business_key(section: str, owner_id: str, value: Any, index: int = 0
                 question_id = question.get("questionId") or question.get("id") or question.get("key")
             if assignment_id not in (None, "") and question_id not in (None, ""):
                 return f"wbook:{owner_id}:{assignment_id}:{question_id}"
+        if section == "library" and value.get("id") not in (None, ""):
+            return f"articles:{value.get('id')}"
         for candidate in ("business_key", "businessKey", "id", "uid", "key", "code"):
             if value.get(candidate) not in (None, ""):
                 return f"{section}:{owner_id}:{_safe_text(value[candidate], 200)}"
@@ -2686,7 +3096,7 @@ def _feishu_fields(section: str, owner_id: str, value: Any, business_key: str) -
         fields = {
             "学员ID": owner_id,
             "题目标题": data.get("title") or data.get("name") or "",
-            "题目内容": str(data.get("question") or data.get("content") or "")[:1000],
+            "题目内容": str(data.get("question") or data.get("content") or data.get("text") or "")[:1000],
             "答案": str(data.get("answer") or "")[:500],
         }
     # A stable application key is additive metadata; it never contains any
@@ -2700,7 +3110,7 @@ def _feishu_fields(section: str, owner_id: str, value: Any, business_key: str) -
 def _local_feishu_records(store: ReadingTrainerStore) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {name: [] for name in (*FEISHU_TABLES, "favorites")}
     for user in store.list_users():
-        if user.get("role") == "admin":
+        if user.get("role") in STAFF_ROLES:
             continue
         clean = {
             "id": user.get("id"),
@@ -2730,6 +3140,15 @@ def _local_feishu_records(store: ReadingTrainerStore) -> dict[str, list[dict[str
             grouped.setdefault(section, []).append(
                 {"owner_id": document["owner_id"], "value": item, "index": index}
             )
+    # Article rows use their stable article ID as the Feishu business key.
+    # System rows have no owner and are grouped under the global owner key;
+    # personal rows retain their owning account ID.
+    with store.connect() as connection:
+        article_rows = connection.execute("SELECT * FROM articles WHERE deleted_at IS NULL ORDER BY updated_at, id").fetchall()
+    for row in article_rows:
+        value = ReadingTrainerStore._article_row(row)
+        value["scope"] = row["scope"]
+        grouped["library"].append({"owner_id": row["owner_id"] or GLOBAL_OWNER_ID, "value": value})
     # Assignments are a separate syncable entity.  One row per
     # assignment/student recipient gives Feishu a stable key even when one
     # teacher sends the same card to multiple students; submitted answers and
@@ -3788,6 +4207,8 @@ def _auth_required(store: ReadingTrainerStore, roles: Iterable[str] | None = Non
     user = _principal(store)
     if not user:
         return None, _error("authentication required", 401, "authentication_required")
+    if roles is None and user.get("role") == "article_admin":
+        return None, _error("article administrator is restricted to article management", 403, "forbidden")
     if roles and user.get("role") not in tuple(roles):
         return None, _error("insufficient permissions", 403, "forbidden")
     return user, None
@@ -4040,9 +4461,26 @@ def _public_feishu_config(store: ReadingTrainerStore, app: Any) -> dict[str, Any
 def _state_snapshot(store: ReadingTrainerStore, principal: Mapping[str, Any] | None, app: Any) -> dict[str, Any]:
     role = principal.get("role") if principal else None
     principal_id = str(principal.get("id")) if principal else ""
-    all_public_users = [item for item in store.list_users() if item.get("role") != "admin"]
+    if role == "article_admin":
+        return {
+            "accounts": [],
+            "invites": [],
+            "classes": [],
+            "membership": None,
+            "ai": {},
+            # Only non-sensitive status flags are returned so a successful
+            # article mutation can trigger the same server-side mirror path as
+            # other business writes. No OAuth token or table data is exposed.
+            "feishu": _public_feishu_config(store, app),
+            "userData": {},
+            "articleAdmin": True,
+        }
+    all_users = [item for item in store.list_users() if item.get("role") != "admin"]
+    all_public_users = [item for item in all_users if item.get("role") not in STAFF_ROLES]
     if role == "admin":
-        visible_users = all_public_users
+        # Full administrators can see and manage article-admin accounts, but
+        # never expose full admin credentials in the ordinary account list.
+        visible_users = all_users
     elif role == "teacher":
         visible_users = [
             item for item in all_public_users
@@ -4118,6 +4556,7 @@ def _create_blueprint(store: ReadingTrainerStore):
                 "admin_configured": bool(store.list_users("admin")),
                 "legacy_state_imported": bool(store.meta_get("legacy_state_imported")),
                 "admin": bool(user and user.get("role") == "admin"),
+                "article_admin": bool(user and user.get("role") == "article_admin"),
                 "state": state,
             }
         )
@@ -4130,7 +4569,9 @@ def _create_blueprint(store: ReadingTrainerStore):
         if not username or not password:
             return _error("invalid credentials", 400, "invalid_credentials")
         user = store.find_user(username, role or None)
-        if not user or (admin_only and user.get("role") != "admin") or not verify_password(password, user.get("password_hash", "")):
+        if admin_only:
+            user = store.find_user(username, "admin") or store.find_user(username, "article_admin")
+        if not user or (admin_only and user.get("role") not in STAFF_ROLES) or not verify_password(password, user.get("password_hash", "")):
             return _error("invalid credentials", 401, "invalid_credentials")
         token = store.create_session(str(user["id"]))
         store.record_usage_event(str(user["id"]), "login", {"role": user.get("role")})
@@ -4144,6 +4585,7 @@ def _create_blueprint(store: ReadingTrainerStore):
                     "success": True,
                     "user": _safe_user(user),
                     "admin": bool(user.get("role") == "admin"),
+                    "article_admin": bool(user.get("role") == "article_admin"),
                     "state": _state_snapshot(store, user, current_app),
                 }
             ),
@@ -4237,6 +4679,104 @@ def _create_blueprint(store: ReadingTrainerStore):
         except (TypeError, ValueError):
             days = 30
         return jsonify({"ok": True, "usage": store.usage_summary(days)})
+
+    @bp.route("/articles", methods=["GET", "POST"])
+    def articles():
+        user, error = _auth_required(store, ("student", "teacher", "admin", "article_admin"))
+        if error:
+            return error
+        if request.method == "GET":
+            query = _safe_text(request.args.get("q") or request.args.get("search"), 200)
+            scope = _safe_text(request.args.get("scope"), 20).lower() or None
+            include_deleted = str(request.args.get("include_deleted") or "").lower() in {"1", "true", "yes"}
+            if include_deleted and str(user.get("role")) not in STAFF_ROLES:
+                return _error("insufficient permissions", 403, "forbidden")
+            rows = store.list_articles(principal=user, scope=scope, include_deleted=include_deleted, query=query)
+            return jsonify({"ok": True, "articles": sanitize_json(rows), "system": sanitize_json([item for item in rows if item.get("scope") == "system"]), "personal": sanitize_json([item for item in rows if item.get("scope") == "personal"]), "systemInitialized": store.meta_get(SYSTEM_ARTICLE_SEED_META) == "1"})
+        payload = _json_body()
+        payload = payload if isinstance(payload, Mapping) else {}
+        try:
+            article = store.create_article(payload, user)
+        except PermissionError as exc:
+            return _error(str(exc), 403, "forbidden")
+        except (TypeError, ValueError, sqlite3.IntegrityError) as exc:
+            return _error(str(exc), 400, "invalid_article")
+        return jsonify({"ok": True, "article": sanitize_json(article)}), 201
+
+    @bp.post("/articles/seed-defaults")
+    def seed_default_articles():
+        user, error = _auth_required(store, STAFF_ROLES)
+        if error:
+            return error
+        payload = _json_body()
+        payload = payload if isinstance(payload, Mapping) else {}
+        try:
+            result = store.seed_system_articles(payload.get("articles"), user)
+        except PermissionError as exc:
+            return _error(str(exc), 403, "forbidden")
+        except (TypeError, ValueError, sqlite3.IntegrityError) as exc:
+            return _error(str(exc), 400, "invalid_article_seed")
+        rows = store.list_articles(principal=user, scope="system")
+        return jsonify({"ok": True, **result, "articles": sanitize_json(rows), "system": sanitize_json(rows)})
+
+    @bp.route("/articles/<article_id>", methods=["GET", "PATCH", "PUT", "DELETE"])
+    def article_detail(article_id: str):
+        user, error = _auth_required(store, ("student", "teacher", "admin", "article_admin"))
+        if error:
+            return error
+        article_id = _safe_text(article_id, 120)
+        if request.method == "GET":
+            article = store.get_article(article_id, principal=user)
+            if not article:
+                return _error("article not found", 404, "not_found")
+            return jsonify({"ok": True, "article": sanitize_json(article)})
+        if request.method == "DELETE":
+            try:
+                article = store.delete_article(article_id, user)
+            except LookupError:
+                return _error("article not found", 404, "not_found")
+            except PermissionError as exc:
+                return _error(str(exc), 403, "forbidden")
+            return jsonify({"ok": True, "article": sanitize_json(article)})
+        payload = _json_body()
+        payload = payload if isinstance(payload, Mapping) else {}
+        try:
+            article = store.update_article(article_id, payload, user)
+        except LookupError:
+            return _error("article not found", 404, "not_found")
+        except PermissionError as exc:
+            return _error(str(exc), 403, "forbidden")
+        except (TypeError, ValueError) as exc:
+            return _error(str(exc), 400, "invalid_article")
+        return jsonify({"ok": True, "article": sanitize_json(article)})
+
+    @bp.get("/articles/<article_id>/audit")
+    def article_audit(article_id: str):
+        user, error = _auth_required(store, STAFF_ROLES)
+        if error:
+            return error
+        if not store.get_article(_safe_text(article_id, 120), principal=user, include_deleted=True):
+            return _error("article not found", 404, "not_found")
+        try:
+            events = store.list_audit_events(_safe_text(article_id, 120), user)
+        except PermissionError as exc:
+            return _error(str(exc), 403, "forbidden")
+        return jsonify({"ok": True, "events": sanitize_json(events)})
+
+    @bp.post("/admin/accounts/article-admin")
+    def create_article_admin_account():
+        user, error = _auth_required(store, ("admin",))
+        if error:
+            return error
+        payload = _json_body()
+        payload = payload if isinstance(payload, Mapping) else {}
+        try:
+            created = store.create_article_admin(str(payload.get("username") or ""), str(payload.get("password") or ""), user)
+        except PermissionError as exc:
+            return _error(str(exc), 403, "forbidden")
+        except (TypeError, ValueError, sqlite3.IntegrityError) as exc:
+            return _error(str(exc), 400, "invalid_account")
+        return jsonify({"ok": True, "user": _safe_user(created), "state": _state_snapshot(store, user, current_app)}), 201
 
     @bp.get("/reports/students/<student_id>")
     def student_report(student_id: str):
@@ -5161,7 +5701,7 @@ def _create_blueprint(store: ReadingTrainerStore):
 
     @bp.post("/feishu/sync")
     def feishu_sync():
-        user, error = _auth_required(store)
+        user, error = _auth_required(store, ("student", "teacher", "admin", "article_admin"))
         if error:
             return error
         payload = _json_body()

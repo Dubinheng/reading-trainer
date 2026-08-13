@@ -358,7 +358,7 @@
   #itr-app .itr-lib-card .chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--itr-surface); color: var(--itr-muted); border: 1px solid var(--itr-border); }
   #itr-app .itr-lib-card .chip.lv { color: var(--itr-primary); border-color: var(--itr-primary); background: #eef3ff; }
   #itr-app .itr-lib-card .wc { font-size: 11px; color: var(--itr-muted); margin-top: 6px; }
-  #itr-app .itr-fav-x { cursor: pointer; color: var(--itr-red); margin-left: 4px; font-weight: 700; }
+  #itr-app .itr-article-delete { cursor: pointer; color: var(--itr-red); margin-left: 4px; font-weight: 700; }
 
   /* ===== My books: vocab book / wrong book / review ===== */
   #itr-app .itr-vbtn { font-size: 11px; margin-top: 8px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--itr-green); background: #E8F7F0; color: #1c7a4a; cursor: pointer; font-family: inherit; }
@@ -1627,6 +1627,7 @@
         <button data-adm="invites">邀请码</button>
         <button data-adm="ai">AI 接口</button>
         <button data-adm="accounts">账号管理</button>
+        <button data-adm="articles">文章资源管理</button>
         <button data-adm="classes">班级管理</button>
         <button data-adm="feishu">飞书同步</button>
       </nav>
@@ -1651,7 +1652,6 @@
 
     <div class="itr-tc-tabs" id="tc-tabs">
       <button class="itr-tc-tab active" data-tc="students">学生管理</button>
-      <button class="itr-tc-tab" data-tc="library">文章资源</button>
     </div>
 
     <div class="itr-tc-panel active" id="tc-panel-students">
@@ -1670,7 +1670,6 @@
         <div class="itr-tc-panel" id="tc-panel-tasks"></div>
       </div>
     </div>
-    <div class="itr-tc-panel" id="tc-panel-library"></div>
   </section>
 
   <!-- Pane: practice -->
@@ -1800,7 +1799,6 @@
       <button class="itr-btn itr-ghost" id="itr-custom-generate" type="button" aria-expanded="false" aria-controls="itr-custom-settings"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.2 6.3L21 11l-6.8 1.7L12 19l-2.2-6.3L3 11l6.8-1.7z"/></svg> 选项生成试题</button>
       <button class="itr-btn itr-ghost" id="itr-vocab-btn" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h6a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z"/><path d="M20 5h-6a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h7z"/></svg> 生词提取</button>
       <button class="itr-btn itr-ghost" id="itr-add-sel-vocab" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> 添加生词</button>
-      <button class="itr-btn itr-ghost" id="itr-fav-btn" type="button"><svg class="itr-ico" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.6 5.6 6.4.8-4.7 4.4 1.2 6.3L12 17.8 6.5 20.1 7.7 13.8 3 9.4l6.4-.8z"/></svg> 收藏</button>
     </div>
     <label class="itr-vocab-ai" id="itr-vocab-ai-wrap" style="display:none;margin-top:10px;font-size:13px;color:var(--itr-muted);">
       <input type="checkbox" id="itr-vocab-ai" /> 用 AI 接口补全释义（需已配置 API，更准确）
@@ -2194,6 +2192,101 @@
       });
     });
   }
+  // Server-backed article resources.  The API may return either a single
+  // `articles` array or separate `system` / `personal` arrays; normalize both
+  // shapes here so the rest of the UI stays role-agnostic.
+  var articleState = { system: [], personal: [], loaded: false, loading: false, error: '', systemInitialized: false };
+  function normalizeArticle(raw, source) {
+    raw = raw || {};
+    var text = raw.text || raw.content || raw.body || raw.article || raw.passage || '';
+    var owner = raw.ownerId || raw.owner_id || raw.userId || raw.user_id || '';
+    var scope = String(raw.scope || raw.source || raw.type || '').toLowerCase();
+    var systemHint = source === 'system' || scope === 'system' || scope === 'public' || scope === 'built-in' || scope === 'builtin';
+    var personal = !systemHint && (source === 'personal' || raw.personal === true || scope === 'personal' || scope === 'user' || !!owner);
+    return {
+      id: raw.id || raw.articleId || raw.article_id || ('article_' + Math.random().toString(36).slice(2)),
+      title: String(raw.title || raw.name || '未命名文章'),
+      text: String(text),
+      level: Math.max(1, Math.min(5, parseInt(raw.level || raw.difficulty || 3, 10) || 3)),
+      category: String(raw.category || raw.theme || raw.topic || ''),
+      ownerId: owner ? String(owner) : '',
+      operator: String(raw.operator || raw.operatorName || raw.updatedByName || raw.updated_by_name || raw.createdByName || raw.created_by_name || raw.updatedBy || raw.updated_by || raw.createdBy || raw.created_by || ''),
+      createdAt: raw.createdAt || raw.created_at || raw.ts || '',
+      updatedAt: raw.updatedAt || raw.updated_at || '' ,
+      personal: personal,
+      legacy: raw.legacy === true
+    };
+  }
+  function articleListFromResponse(res) {
+    res = res || {};
+    var system = [], personal = [], add = function (value, source) {
+      if (!Array.isArray(value)) return;
+      value.forEach(function (item) {
+        var article = normalizeArticle(item, source);
+        if (!article.text) return;
+        if (article.personal && article.ownerId && currentUser && String(article.ownerId) !== String(currentUser.id)) return;
+        var isPersonal = article.personal || (currentUser && article.ownerId && String(article.ownerId) === String(currentUser.id));
+        (isPersonal ? personal : system).push(article);
+      });
+    };
+    if (Array.isArray(res)) add(res, '');
+    add(res.system, 'system'); add(res.systemArticles, 'system'); add(res.system_articles, 'system');
+    add(res.personal, 'personal'); add(res.personalArticles, 'personal'); add(res.personal_articles, 'personal');
+    add(res.articles, ''); add(res.data, '');
+    if (res.result && typeof res.result === 'object') {
+      add(res.result.system, 'system'); add(res.result.personal, 'personal'); add(res.result.articles, '');
+    }
+    var seen = {};
+    return { system: system.filter(function (a) { var key = 's:' + a.id; if (seen[key]) return false; seen[key] = true; return true; }),
+      personal: personal.filter(function (a) { var key = 'p:' + a.id; if (seen[key]) return false; seen[key] = true; return true; }) };
+  }
+  function loadArticles(force) {
+    if (articleState.loading) return articleState._promise || Promise.resolve(articleState);
+    if (articleState.loaded && !force) return Promise.resolve(articleState);
+    articleState.loading = true; articleState.error = '';
+    articleState._promise = apiV2('/articles').then(function (res) {
+      var lists = articleListFromResponse(res);
+      // Keep the shipped catalogue visible for existing learners until the
+      // production database has completed its one-time seed migration. Admin
+      // views intentionally omit this fallback so every editable row is
+      // server-backed and auditable.
+      if (!lists.system.length && !serverAdmin && !serverAdminUser && Array.isArray(LIBRARY)) {
+        lists.system = LIBRARY.map(function (item, index) { return normalizeArticle({ id: 'builtin_' + index, scope: 'system', title: item.title, text: item.text, level: item.level, category: item.theme }, 'system'); });
+      }
+      articleState.system = lists.system; articleState.personal = lists.personal;
+      articleState.systemInitialized = res && (res.systemInitialized === true || res.system_initialized === true);
+      articleState.loaded = true; return articleState;
+    }).catch(function (err) {
+      articleState.error = err && err.message ? err.message : '文章资源读取失败';
+      articleState.system = []; articleState.personal = []; throw err;
+    }).finally(function () { articleState.loading = false; });
+    return articleState._promise;
+  }
+  function articlePayload(form, scope) {
+    var payload = { title: form.title, content: form.text, text: form.text, level: form.level, category: form.category || '', scope: scope || 'personal' };
+    if (form.id) payload.id = form.id;
+    return payload;
+  }
+  function createArticle(form, scope) {
+    return apiV2('/articles', { method: 'POST', body: JSON.stringify(articlePayload(form, scope)) }).then(function (res) {
+      if (res && res.state) applyServerState(res.state);
+      syncAllToFeishu();
+      return res;
+    });
+  }
+  function seedDefaultSystemArticles() {
+    if (!Array.isArray(LIBRARY) || !LIBRARY.length || articleState.system.length || articleState.systemInitialized) return Promise.resolve();
+    if (articleState.seedPromise) return articleState.seedPromise;
+    var articles = LIBRARY.map(function (item) { return { title: item.title, content: item.text, level: item.level, category: item.theme || '' }; });
+    articleState.seedPromise = apiV2('/articles/seed-defaults', { method: 'POST', body: JSON.stringify({ articles: articles }) }).then(function () { articleState.systemInitialized = true; articleState.loaded = false; syncAllToFeishu(); return loadArticles(true); }).finally(function () { articleState.seedPromise = null; });
+    return articleState.seedPromise;
+  }
+  function updateArticle(id, form, scope) {
+    return apiV2('/articles/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(articlePayload(form, scope)) }).then(function (res) { syncAllToFeishu(); return res; });
+  }
+  function deleteArticle(id) {
+    return apiV2('/articles/' + encodeURIComponent(id), { method: 'DELETE', body: '{}' }).then(function (res) { syncAllToFeishu(); return res; });
+  }
   function cloneData(value, fallback) {
     try { return JSON.parse(JSON.stringify(value == null ? fallback : value)); }
     catch (e) { return fallback; }
@@ -2247,24 +2340,38 @@
   function migrateLegacyBrowserData() {
     if (!currentUser || uiMemory.legacyChecked) return Promise.resolve();
     uiMemory.legacyChecked = true;
-    if (currentUser.role === 'admin') { cleanVerifiedLegacyAdminCopies(); return Promise.resolve(); }
+    if (currentUser.role === 'admin' || currentUser.role === 'article_admin') { cleanVerifiedLegacyAdminCopies(); return Promise.resolve(); }
     var owners = Object.keys(serverState.userData || {});
     if (owners.indexOf(currentUser.id) === -1) owners.push(currentUser.id);
     var jobs = [];
     owners.forEach(function(ownerId){
-      ['vbook','wbook','grades','library'].forEach(function(section){
+      ['vbook','wbook','grades'].forEach(function(section){
         var key='itr_'+section+'_'+ownerId, legacy=legacyRead(key);
         if (legacy == null) return;
         var merged=mergeLegacy(ownerData(ownerId)[section], legacy, false);
         jobs.push(persistUserData(section, ownerId, merged).then(function(){ legacyRemove(key); }));
       });
     });
-    [['favorites','itr_favs',false],['settings','itr_settings',true],['vbook','itr_vbook',false],['wbook','itr_wbook',false]].forEach(function(spec){
+    [['settings','itr_settings',true],['vbook','itr_vbook',false],['wbook','itr_wbook',false]].forEach(function(spec){
       var legacy=legacyRead(spec[1]);
       if (legacy == null) return;
       var merged=mergeLegacy(ownerData(currentUser.id)[spec[0]], legacy, spec[2]);
       jobs.push(persistUserData(spec[0], currentUser.id, merged).then(function(){ legacyRemove(spec[1]); }));
     });
+    function migrateLegacyArticles(key, ownerId) {
+      var legacy = legacyRead(key);
+      if (!Array.isArray(legacy) || !legacy.length) return;
+      var writes = legacy.map(function (item, index) {
+        item = item || {};
+        var text = String(item.content || item.text || item.article || '').trim();
+        if (!text) return Promise.resolve();
+        var stableId = ('legacy_browser_' + ownerId + '_' + key + '_' + index).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 120);
+        return createArticle({ id: stableId, title: String(item.title || item.name || '个人文章'), text: text, level: Number(item.level || 3), category: String(item.category || item.theme || '') }, 'personal');
+      });
+      jobs.push(Promise.all(writes).then(function () { legacyRemove(key); }));
+    }
+    migrateLegacyArticles('itr_favs', currentUser.id);
+    migrateLegacyArticles('itr_library_' + currentUser.id, currentUser.id);
     ['itr_session','itr_admin_session','itr_cur_student','itr_selected_students','itr_students'].forEach(legacyRemove);
     return Promise.all(jobs).then(function(){ if(jobs.length) showToast('旧浏览器资料已安全迁移到腾讯服务器'); });
   }
@@ -4848,98 +4955,35 @@
   // ---------- Article library ----------
   function buildLibraryPanel() {
     var panel = $("itr-lib-panel");
-    var favs = getFavs();
-    var html = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">' +
-      '<span style="font-size:13px;font-weight:600;">内置文章资源（点击自动填入并匹配难度）</span>' +
-      '<span style="flex:1;"></span>' +
-      '<button type="button" class="itr-btn itr-primary" id="itr-fav-now">＋ 收藏</button></div>';
-
-    if (favs.length) {
-      html += '<div style="font-size:13px;font-weight:600;margin:8px 0 6px;color:var(--itr-primary);">' + ICONS.star + ' 我的收藏（' + favs.length + '）</div>';
-      html += '<div class="itr-lib-grid">';
-      favs.forEach(function (art, i) {
-        var lv = LEVELS[art.level - 1];
-        html += '<button type="button" class="itr-lib-card" data-fav="' + i + '">' +
-          '<div class="t">' + escapeHtml(art.title) + "</div>" +
-          '<div class="m"><span class="chip lv">' + escapeHtml(lv ? lv.name : ("L" + art.level)) + '</span>' +
-          '<span class="chip">收藏</span></div>' +
-          '<div class="wc">' + countWords(art.text) + ' 词 <span class="itr-fav-x" data-favrm="' + i + '" title="移除收藏">' + ICONS.x + '</span></div></button>';
-      });
-      html += "</div>";
-    }
-
-    if (currentUser && currentUser.role === 'student' && currentUser.created_by) {
-      var tlib = [];
-      tlib = cloneData(ownerData(currentUser.created_by).library, []);
-      if (tlib.length) {
-        html += '<div style="font-size:13px;font-weight:600;margin:10px 0 6px;color:var(--itr-primary);">老师分享的文章（' + tlib.length + '）</div>';
-        html += '<div class="itr-lib-grid">';
-        tlib.forEach(function(art, i){
-          var lv = LEVELS[art.level-1];
-          html += '<button type="button" class="itr-lib-card" data-t="'+i+'">' +
-            '<div class="t">'+escapeHtml(art.title)+'</div>' +
-            '<div class="m"><span class="chip lv">'+(lv?lv.name:('L'+art.level))+'</span><span class="chip">老师</span></div>' +
-            '<div class="wc">'+countWords(art.text)+' 词</div></button>';
-        });
-        html += '</div>';
+    if (!panel) return;
+    panel.innerHTML = '<div class="itr-status"><span class="itr-spinner"></span>正在读取文章资源…</div>';
+    loadArticles().then(function () {
+      var html = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;"><strong>文章资源</strong><span class="itr-hint" style="margin:0;">系统文章与当前账号的个人文章均来自服务器</span><span style="flex:1"></span><button type="button" class="itr-btn itr-primary" id="itr-personal-add">＋ 添加个人文章</button></div>';
+      html += '<div id="itr-personal-form" class="itr-adm-form" style="display:none;"><label>添加个人文章</label><div class="itr-row"><input id="itr-personal-title" placeholder="文章标题" style="flex:2 1 220px;"><select id="itr-personal-level" style="flex:0 0 150px;">' + levelOptions() + '</select><input id="itr-personal-category" placeholder="类目（可选）" style="flex:1 1 160px;"></div><textarea id="itr-personal-text" placeholder="粘贴英语文章正文…" style="width:100%;min-height:130px;margin-top:8px;"></textarea><div class="itr-row" style="margin-top:8px;"><button type="button" class="itr-btn itr-primary" id="itr-personal-save">保存到服务器</button><button type="button" class="itr-btn itr-ghost" id="itr-personal-cancel">取消</button><span id="itr-personal-msg" class="itr-hint" style="margin:0;"></span></div></div>';
+      function cards(list, kind) {
+        if (!list.length) return '<div class="itr-book-empty">暂无文章。</div>';
+        return '<div class="itr-lib-grid">' + list.map(function (art) { var lv = LEVELS[art.level - 1]; return '<div class="itr-lib-card" data-article-id="' + escapeHtml(String(art.id)) + '" data-article-kind="' + kind + '" tabindex="0" role="button"><div class="t">' + escapeHtml(art.title) + '</div><div class="m"><span class="chip lv">' + escapeHtml(lv ? lv.name : ('L' + art.level)) + '</span>' + (art.category ? '<span class="chip">' + escapeHtml(art.category) + '</span>' : '') + (art.legacy ? '<span class="chip">历史迁移</span>' : '') + '</div><div class="wc">' + countWords(art.text) + ' 词' + (kind === 'personal' && !art.legacy ? ' <button type="button" class="itr-link itr-article-delete" data-article-delete="' + escapeHtml(String(art.id)) + '">删除</button>' : '') + '</div></div>'; }).join('') + '</div>';
       }
-    }
-    html += '<div style="font-size:13px;font-weight:600;margin:10px 0 6px;">全部内置文章</div>';
-    html += '<div class="itr-lib-grid">';
-    LIBRARY.forEach(function (art, i) {
-      var lv = LEVELS[art.level - 1];
-      html += '<button type="button" class="itr-lib-card" data-i="' + i + '">' +
-        '<div class="t">' + escapeHtml(art.title) + "</div>" +
-        '<div class="m"><span class="chip lv">' + escapeHtml(lv ? lv.name : ("L" + art.level)) + '</span>' +
-        '<span class="chip">' + escapeHtml(art.theme) + "</span></div>" +
-        '<div class="wc">' + countWords(art.text) + " 词</div></button>";
-    });
-    html += "</div>";
-    panel.innerHTML = html;
-
-    // favorites: load + remove
-    panel.querySelectorAll("[data-fav]").forEach(function (btn) {
-      btn.addEventListener("click", function (e) {
-        if (e.target.classList.contains("itr-fav-x")) return;
-        var art = getFavs()[+btn.getAttribute("data-fav")];
-        $("itr-input").value = art.text;
-        $("itr-level").value = String(art.level);
-        switchTab("practice");
-        updateMeta();
-        setStatus("已载入收藏文章《" + art.title + "》。", false);
+      html += '<section><div style="font-size:13px;font-weight:700;margin:10px 0 6px;color:var(--itr-primary);">系统文章（' + articleState.system.length + '）</div>' + cards(articleState.system, 'system') + '</section>';
+      html += '<section><div style="font-size:13px;font-weight:700;margin:14px 0 6px;color:var(--itr-primary);">个人文章（' + articleState.personal.length + '）</div>' + cards(articleState.personal, 'personal') + '</section>';
+      panel.innerHTML = html;
+      var add = panel.querySelector('#itr-personal-add'), form = panel.querySelector('#itr-personal-form');
+      if (add) add.addEventListener('click', function () { form.style.display = form.style.display === 'none' ? '' : 'none'; });
+      var cancel = panel.querySelector('#itr-personal-cancel'); if (cancel) cancel.addEventListener('click', function () { form.style.display = 'none'; });
+      var save = panel.querySelector('#itr-personal-save'); if (save) save.addEventListener('click', function () {
+        var title = panel.querySelector('#itr-personal-title').value.trim(), text = panel.querySelector('#itr-personal-text').value.trim(), level = parseInt(panel.querySelector('#itr-personal-level').value, 10) || 3, category = panel.querySelector('#itr-personal-category').value.trim(), msg = panel.querySelector('#itr-personal-msg');
+        if (!title || !text) { if (msg) msg.textContent = '请填写标题和正文。'; return; }
+        save.disabled = true; if (msg) msg.textContent = '保存中…';
+        createArticle({title:title, text:text, level:level, category:category}, 'personal').then(function () { if (msg) msg.textContent = '服务器已确认保存。'; articleState.loaded = false; return loadArticles(true); }).then(buildLibraryPanel).catch(function (err) { if (msg) msg.textContent = '保存失败：' + (err.message || '服务器未确认'); }).finally(function () { save.disabled = false; });
       });
-    });
-    panel.querySelectorAll("[data-favrm]").forEach(function (b) {
-      b.addEventListener("click", function (e) { e.stopPropagation(); var a = getFavs(); a.splice(+b.getAttribute("data-favrm"), 1); saveFavs(a); buildLibraryPanel(); });
-    });
-    var favNow = $("itr-fav-now"); if (favNow) favNow.addEventListener("click", function () { saveFavorite(); });
-    panel.querySelectorAll(".itr-lib-card[data-t]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var tlib = cloneData(ownerData(currentUser.created_by).library, []);
-        var art = tlib[+btn.getAttribute("data-t")]; if (!art) return;
-        $("itr-input").value = art.text; $("itr-level").value = String(art.level);
-        switchTab("practice"); updateMeta();
-        setStatus("已载入老师分享的文章《" + art.title + "》。", false);
-      });
-    });
-
-    // built-in: load
-    panel.querySelectorAll(".itr-lib-card[data-i]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var art = LIBRARY[+btn.getAttribute("data-i")];
-        $("itr-input").value = art.text;
-        $("itr-level").value = String(art.level);
-        switchTab("practice");
-        updateMeta();
-        setStatus("已载入文章《" + art.title + "》，难度级别已设为 " + (LEVELS[art.level - 1] ? LEVELS[art.level - 1].name : "L" + art.level) + "。", false);
-      });
-    });
+      panel.querySelectorAll('[data-article-id]').forEach(function (card) { card.addEventListener('click', function (e) { if (e && e.target && e.target.closest && e.target.closest('[data-article-delete]')) return; var list = card.getAttribute('data-article-kind') === 'personal' ? articleState.personal : articleState.system, art = list.filter(function (a) { return String(a.id) === String(card.getAttribute('data-article-id')); })[0]; if (!art) return; $("itr-input").value = art.text; $("itr-level").value = String(art.level); switchTab('practice'); updateMeta(); setStatus('已载入文章《' + art.title + '》。', false); }); });
+      panel.querySelectorAll('[data-article-delete]').forEach(function (button) { button.addEventListener('click', function (e) { e.stopPropagation(); if (!confirm('确定删除这篇个人文章？')) return; button.disabled = true; deleteArticle(button.getAttribute('data-article-delete')).then(function () { articleState.loaded = false; return loadArticles(true); }).then(buildLibraryPanel).catch(function (err) { button.disabled = false; showToast('删除失败：' + (err.message || '服务器未确认'), 'error'); }); }); });
+    }).catch(function (err) { panel.innerHTML = '<div class="itr-stats-empty">文章资源读取失败：' + escapeHtml(err.message || '请稍后重试') + '</div><button type="button" class="itr-btn itr-ghost" id="itr-article-retry">重试</button>'; var retry = panel.querySelector('#itr-article-retry'); if (retry) retry.addEventListener('click', function () { articleState.loaded = false; buildLibraryPanel(); }); });
   }
 
-  // ---------- My books: favorites (user-collected articles) ----------
+  // ---------- My books: server-backed vocabulary and wrong-answer books ----------
   function storageDescriptor(key) {
-    if (key === 'itr_favs') return { section:'favorites', ownerId:currentUser && currentUser.id };
-    var m = String(key || '').match(/^itr_(vbook|wbook|grades|library)_(.+)$/);
+    var m = String(key || '').match(/^itr_(vbook|wbook|grades)_(.+)$/);
     if (m) return { section:m[1], ownerId:m[2] };
     return null;
   }
@@ -4957,25 +5001,6 @@
     if (d && d.ownerId) persistUserData(d.section, d.ownerId, val);
     else if (key === 'itr_students') uiMemory.students = cloneData(val, []);
   }
-  var FAVKEY = "itr_favs";
-  function getFavs() { return loadJSON(FAVKEY, []); }
-  function saveFavs(a) { saveJSON(FAVKEY, a); }
-  function saveFavorite() {
-    var raw = $("itr-input").value.trim();
-    if (!raw) { setStatus("请先粘贴或载入一篇文章，再点击收藏。", true); return; }
-    var title;
-    try { title = (typeof window.prompt === "function") ? window.prompt("给这篇收藏文章起个名字：", "我的文章 " + (getFavs().length + 1)) : null; }
-    catch (e) { title = null; }
-    if (title === null) return;
-    title = (title || "").trim() || ("我的文章 " + (getFavs().length + 1));
-    var level = LEVELS[parseInt($("itr-level").value, 10) - 1];
-    var favs = getFavs();
-    favs.unshift({ id: "f" + Date.now(), title: title, theme: "收藏", level: level ? level.id : 3, text: raw, ts: Date.now() });
-    saveFavs(favs);
-    setStatus("已收藏《" + title + "》到「文章资源 · 我的收藏」。", false);
-    if ($("itr-lib-panel").classList.contains("open")) buildLibraryPanel();
-  }
-
   // ---------- My books: vocab book ----------
   var VBKEY = "itr_vbook";
   function vbookKey() { return (currentUser && currentUser.id) ? ("itr_vbook_" + currentUser.id) : VBKEY; }
@@ -5924,7 +5949,6 @@
   });
   $("itr-vocab-btn").addEventListener("click", function () { switchTab("practice"); doVocabExtract(); });
   $("itr-add-sel-vocab").addEventListener("click", addSelectionToVBook);
-  $("itr-fav-btn").addEventListener("click", saveFavorite);
   $("itr-stu-all").addEventListener("click", selectAllStudents);
   $("itr-stu-clear").addEventListener("click", clearSelectedStudents);
   $("itr-student-selector").addEventListener("change", function(e){
@@ -5972,12 +5996,14 @@
     var tally = {};
     book.forEach(function (it) { var t = normType(it.q.type); tally[t] = (tally[t] || 0) + 1; });
     var weak = Object.keys(tally).sort(function (a, b) { return tally[b] - tally[a]; })[0];
-    // pick a library article (favor one near the current level)
+    // pick a server-managed system article (falling back to the shipped
+    // catalogue until the first admin seed migration completes)
     var lv = parseInt($("itr-level").value, 10) || 3;
     var pick = null;
-    LIBRARY.forEach(function (a) { if (!pick || Math.abs(a.level - lv) < Math.abs(pick.level - lv)) pick = a; });
+    var candidates = (articleState.loaded && articleState.system.length) ? articleState.system : LIBRARY;
+    candidates.forEach(function (a) { if (!pick || Math.abs(a.level - lv) < Math.abs(pick.level - lv)) pick = a; });
     if (!pick) { setStatus("文章资源为空，无法推荐。", true); return; }
-    $("itr-input").value = pick.text;
+    $("itr-input").value = pick.text || pick.content || "";
     updateMeta();
     setStatus("已为你推荐针对【" + typeLabel(weak) + "】的练习文章《" + pick.title + "》，点击「一键生成试题」开始（错题记录共 " + book.length + " 道，其中该题型 " + tally[weak] + " 道）。");
   }
@@ -6376,7 +6402,6 @@ function showRoleGate() {
     if (!currentUser || currentUser.role !== 'teacher') return;
     
       nameEl.textContent = '教师：' + currentUser.username;
-      if (typeof bindTeacherTabs === 'function') bindTeacherTabs();
     
     // Class-first filtering mirrors server teacher_can_access().
     var allStudents = getStudentsByTeacher(currentUser.id);
@@ -6622,56 +6647,8 @@ function showRoleGate() {
     return cloneData(ownerData(studentId).grades, []);
   }
 
-  function getTeacherLibrary() {
-    if (!currentUser) return [];
-    return cloneData(ownerData(currentUser.id).library, []);
-  }
-  function saveTeacherLibrary(a) {
-    if (!currentUser) return;
-    persistUserData('library', currentUser.id, a);
-  }
   function levelOptions() {
     return LEVELS.map(function(l){ return '<option value="'+l.id+'">'+escapeHtml(l.name)+'</option>'; }).join('');
-  }
-  function bindTeacherTabs() {
-    var tabs = document.getElementById('tc-tabs'); if (!tabs) return;
-    if (tabs.getAttribute('data-bound') === '1') return;
-    tabs.setAttribute('data-bound', '1');
-    tabs.querySelectorAll('.itr-tc-tab').forEach(function(b){
-      b.addEventListener('click', function(){
-        tabs.querySelectorAll('.itr-tc-tab').forEach(function(x){ x.classList.remove('active'); });
-        ['tc-panel-students','tc-panel-library'].forEach(function(pid){ var p=document.getElementById(pid); if(p) p.classList.remove('active'); });
-        b.classList.add('active');
-        var t = b.getAttribute('data-tc');
-        if (t === 'students') { var ps=document.getElementById('tc-panel-students'); if(ps) ps.classList.add('active'); renderTeacherCenter(); }
-        else if (t === 'library') { var pl=document.getElementById('tc-panel-library'); if(pl) pl.classList.add('active'); renderTCLibrary(); }
-      });
-    });
-  }
-  function renderTCLibrary() {
-    if (!currentUser || currentUser.role !== 'teacher') return;
-    var panel = document.getElementById('tc-panel-library'); if (!panel) return;
-    var html = '<div class="itr-adm-form"><label>录入文章（分级后存入你的班级文章资源，学生可在「文章资源」中选用）</label>'
-      + '<div class="itr-row"><input type="text" id="tc-art-title" placeholder="文章标题" style="flex:2 1 240px;" /><select id="tc-art-level" style="flex:0 0 120px;">'+levelOptions()+'</select></div>'
-      + '<textarea id="tc-art-text" placeholder="粘贴英语文章正文…" style="width:100%;min-height:120px;margin-top:8px;border:1px solid var(--itr-border);border-radius:8px;padding:10px;font:inherit;background:var(--itr-card);color:var(--itr-fg);"></textarea>'
-      + '<div class="itr-row" style="margin-top:8px;"><button type="button" class="itr-btn itr-primary" id="tc-art-add">保存到文章资源</button></div></div>';
-    html += '<div class="itr-lib-grid" id="tc-art-list">';
-    var lib = getTeacherLibrary();
-    if (!lib.length) html += '<div style="color:var(--itr-muted);font-size:13px;padding:10px 0;">文章资源为空。</div>';
-    lib.forEach(function(art,i){
-      var lv = LEVELS[art.level-1];
-      html += '<div class="itr-lib-card"><div class="t">'+escapeHtml(art.title)+'</div><div class="m"><span class="chip lv">'+(lv?lv.name:('L'+art.level))+'</span></div><div class="wc">'+countWords(art.text)+' 词 <span class="itr-fav-x" data-artrm="'+i+'" title="删除">'+ICONS.x+'</span></div></div>';
-    });
-    html += '</div>';
-    panel.innerHTML = html;
-    var add = document.getElementById('tc-art-add'); if (add) add.addEventListener('click', function(){
-      var title = document.getElementById('tc-art-title').value.trim();
-      var text = document.getElementById('tc-art-text').value.trim();
-      var lv = parseInt(document.getElementById('tc-art-level').value, 10);
-      if (!title || !text) { showToast('请填写标题与正文'); return; }
-      var l = getTeacherLibrary(); l.unshift({ title:title, level:lv, text:text, ts:Date.now() }); saveTeacherLibrary(l); renderTCLibrary(); showToast('已保存到文章资源');
-    });
-    panel.querySelectorAll('[data-artrm]').forEach(function(b){ b.addEventListener('click', function(){ var l=getTeacherLibrary(); l.splice(+b.getAttribute('data-artrm'),1); saveTeacherLibrary(l); renderTCLibrary(); }); });
   }
 
   // Override initRole to check auth first
@@ -6717,9 +6694,15 @@ function showRoleGate() {
   // ============================================================
   // ADMIN BACKEND LOGIC
   // ============================================================
+  var serverAdminUser = null;
+  function adminIsArticleOnly() { return !!(serverAdminUser && String(serverAdminUser.role || '').toLowerCase() === 'article_admin'); }
+  function applyAdminNavigation() {
+    var nav = document.getElementById('itr-admin-nav'); if (!nav) return;
+    nav.querySelectorAll('button').forEach(function (button) { var allowed = !adminIsArticleOnly() || button.getAttribute('data-adm') === 'articles'; button.style.display = allowed ? '' : 'none'; });
+  }
   function showAdminGate(){ var g=document.getElementById('itr-admin-gate'); if(g) g.style.display=''; var p=document.getElementById('itr-admin-panel'); if(p) p.style.display='none'; }
   function hideAdminGate(){ var g=document.getElementById('itr-admin-gate'); if(g) g.style.display='none'; }
-  function showAdminPanel(){ var p=document.getElementById('itr-admin-panel'); if(p){ p.style.display=''; renderAdmin('overview'); } }
+  function showAdminPanel(){ var p=document.getElementById('itr-admin-panel'); if(p){ p.style.display=''; applyAdminNavigation(); renderAdmin(adminIsArticleOnly() ? 'articles' : 'overview'); } }
   function hideAdminPanel(){ var p=document.getElementById('itr-admin-panel'); if(p) p.style.display='none'; }
 
   function adminLogin(){
@@ -6729,7 +6712,9 @@ function showRoleGate() {
     if(!u || !p){ err.textContent='请输入管理员账号密码'; return; }
     err.textContent='正在登录服务器后台…';
     return apiV2('/admin/login', {method:'POST', body:JSON.stringify({username:u,password:p})}).then(function(res){
-      setAdminSession({authenticated:true}); applyServerState(res.state); cleanVerifiedLegacyAdminCopies();
+      serverAdminUser = res.user || { username:u, role:'admin' };
+      setAdminSession({authenticated:true, role:serverAdminUser.role}); applyServerState(res.state); cleanVerifiedLegacyAdminCopies();
+      applyAdminNavigation();
       var passInput=document.getElementById('itr-admin-pass');
       if(passInput) passInput.value='';
       hideAdminGate(); showAdminPanel();
@@ -6739,16 +6724,35 @@ function showRoleGate() {
 
   function adminOverviewCard(t,v,s){ return '<div class="itr-adm-card"><div class="itr-adm-card-v">'+escapeHtml(String(v))+'</div><div class="itr-adm-card-t">'+escapeHtml(t)+(s?' <span>'+escapeHtml(s)+'</span>':'')+'</div></div>'; }
   function renderAdmin(tab){
+    if (adminIsArticleOnly() && tab !== 'articles') tab = 'articles';
     var nav=document.getElementById('itr-admin-nav'); if(nav){ nav.querySelectorAll('button').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-adm')===tab); }); }
-    var titleMap={overview:'概览', usage:'平台使用情况', invites:'邀请码', ai:'AI 接口', accounts:'账号管理', classes:'班级管理', feishu:'飞书同步'};
+    var titleMap={overview:'概览', usage:'平台使用情况', invites:'邀请码', ai:'AI 接口', accounts:'账号管理', articles:'文章资源管理', classes:'班级管理', feishu:'飞书同步'};
     var tt=document.getElementById('itr-admin-title'); if(tt) tt.textContent='管理者后台 · '+(titleMap[tab]||'');
     if(tab==='overview') renderAdminOverview();
     else if(tab==='usage') renderAdminUsage();
     else if(tab==='invites') renderAdminInvites();
     else if(tab==='ai') renderAdminAI();
     else if(tab==='accounts') renderAdminAccounts();
+    else if(tab==='articles') renderAdminArticles();
     else if(tab==='classes') renderAdminClasses();
     else if(tab==='feishu') renderAdminFeishu();
+  }
+  function renderAdminArticles(){
+    var c=document.getElementById('itr-admin-content'); if(!c) return;
+    c.innerHTML='<div class="itr-adm-hint">正在读取系统文章…</div>';
+    loadArticles(true).then(seedDefaultSystemArticles).then(function(){
+      var html='<div class="itr-adm-form"><label id="itr-admin-article-form-label">新增系统文章</label><div class="itr-row"><input id="itr-admin-article-title" placeholder="文章标题" style="flex:2 1 220px;"><select id="itr-admin-article-level" style="flex:0 0 150px;">'+levelOptions()+'</select><input id="itr-admin-article-category" placeholder="类目" style="flex:1 1 160px;"></div><textarea id="itr-admin-article-text" placeholder="文章正文…" style="width:100%;min-height:130px;margin-top:8px;"></textarea><div class="itr-row" style="margin-top:8px;"><button type="button" class="itr-btn itr-primary" id="itr-admin-article-save">保存系统文章</button><button type="button" class="itr-btn itr-ghost" id="itr-admin-article-reset">清空</button><span id="itr-admin-article-msg" class="itr-hint" style="margin:0;"></span></div></div>';
+      html+='<table class="itr-adm-table"><thead><tr><th>标题</th><th>等级</th><th>类目</th><th>时间</th><th>操作员</th><th>操作</th></tr></thead><tbody>';
+      if(!articleState.system.length) html+='<tr><td colspan="6" style="text-align:center;color:var(--itr-muted);">暂无系统文章</td></tr>';
+      articleState.system.slice().reverse().forEach(function(a){ var dt=a.updatedAt||a.createdAt; var time=dt?(isFinite(Number(dt))?new Date(Number(dt)<100000000000?Number(dt)*1000:Number(dt)).toLocaleString():new Date(dt).toLocaleString()):'—'; html+='<tr><td>'+escapeHtml(a.title)+'</td><td>L'+a.level+'</td><td>'+escapeHtml(a.category||'—')+'</td><td>'+escapeHtml(time)+'</td><td>'+escapeHtml(a.operator||'—')+'</td><td><button type="button" class="itr-link" data-article-edit="'+escapeHtml(String(a.id))+'">编辑</button> <button type="button" class="itr-link" data-article-admin-delete="'+escapeHtml(String(a.id))+'">删除</button></td></tr>'; });
+      html+='</tbody></table>'; c.innerHTML=html;
+      var editingId=null, titleEl=c.querySelector('#itr-admin-article-title'), levelEl=c.querySelector('#itr-admin-article-level'), categoryEl=c.querySelector('#itr-admin-article-category'), textEl=c.querySelector('#itr-admin-article-text'), labelEl=c.querySelector('#itr-admin-article-form-label'), saveEl=c.querySelector('#itr-admin-article-save'), msgEl=c.querySelector('#itr-admin-article-msg');
+      function reset(){ editingId=null; labelEl.textContent='新增系统文章'; saveEl.textContent='保存系统文章'; titleEl.value=''; levelEl.value='3'; categoryEl.value=''; textEl.value=''; if(msgEl) msgEl.textContent=''; }
+      c.querySelector('#itr-admin-article-reset').addEventListener('click', reset);
+      c.querySelectorAll('[data-article-edit]').forEach(function(b){ b.addEventListener('click',function(){ var a=articleState.system.filter(function(x){return String(x.id)===String(b.getAttribute('data-article-edit'));})[0]; if(!a)return; editingId=a.id; labelEl.textContent='编辑系统文章'; saveEl.textContent='保存修改'; titleEl.value=a.title; levelEl.value=String(a.level); categoryEl.value=a.category||''; textEl.value=a.text; c.scrollIntoView({behavior:'smooth',block:'start'}); }); });
+      saveEl.addEventListener('click',function(){ var title=titleEl.value.trim(), text=textEl.value.trim(); if(!title||!text){msgEl.textContent='请填写标题和正文。';return;} saveEl.disabled=true; msgEl.textContent='保存中…'; var form={title:title,text:text,level:parseInt(levelEl.value,10)||3,category:categoryEl.value.trim()}; var op=editingId?updateArticle(editingId,form,'system'):createArticle(form,'system'); op.then(function(){msgEl.textContent='服务器已确认保存。'; articleState.loaded=false; return loadArticles(true);}).then(function(){renderAdminArticles();}).catch(function(err){saveEl.disabled=false;msgEl.textContent='保存失败：'+(err.message||'服务器未确认');}); });
+      c.querySelectorAll('[data-article-admin-delete]').forEach(function(b){ b.addEventListener('click',function(){ if(!confirm('确定删除该系统文章？'))return; b.disabled=true; deleteArticle(b.getAttribute('data-article-admin-delete')).then(function(){articleState.loaded=false;return loadArticles(true);}).then(renderAdminArticles).catch(function(err){b.disabled=false;showToast('删除失败：'+(err.message||'服务器未确认'),'error');}); }); });
+    }).catch(function(err){ c.innerHTML='<div class="itr-stats-empty">系统文章读取失败：'+escapeHtml(err.message||'请稍后重试')+'</div><button type="button" class="itr-btn itr-ghost" id="itr-admin-article-retry">重试</button>'; var retry=c.querySelector('#itr-admin-article-retry'); if(retry)retry.addEventListener('click',function(){renderAdminArticles();}); });
   }
   function renderAdminFeishu(){
     var cfg = getFeishuConfig();
@@ -6898,15 +6902,17 @@ function showRoleGate() {
     });
   }
   function renderAdminAccounts(){
-    var html='<table class="itr-adm-table"><thead><tr><th>用户名</th><th>角色</th><th>绑定教师</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
+    var html='<div class="itr-adm-form"><label>创建文章管理员</label><div class="itr-row"><input id="itr-article-admin-user" placeholder="登录账号" style="flex:1 1 180px;"><input id="itr-article-admin-pass" type="password" placeholder="初始密码（至少 6 位）" style="flex:1 1 220px;"><button type="button" class="itr-btn itr-primary" id="itr-article-admin-create">创建文章管理员</button><span id="itr-article-admin-msg" class="itr-hint" style="margin:0;"></span></div></div><table class="itr-adm-table"><thead><tr><th>用户名</th><th>角色</th><th>绑定教师</th><th>注册时间</th><th>操作</th></tr></thead><tbody>';
     var accs=getAccounts();
     if(!accs.length) html+='<tr><td colspan="5" style="text-align:center;color:var(--itr-muted);">暂无账号</td></tr>';
     accs.forEach(function(a){
       var tname = a.created_by ? (getAccountById(a.created_by)?getAccountById(a.created_by).username:'—') : '—';
-      html+='<tr><td>'+escapeHtml(a.username)+'</td><td>'+(a.role==='teacher'?'教师':'学生')+'</td><td>'+escapeHtml(tname)+'</td><td>'+(a.createdAt?new Date(a.createdAt).toLocaleString():'—')+'</td><td><button type="button" class="itr-link" data-del="'+escapeHtml(a.id)+'">删除</button></td></tr>';
+      html+='<tr><td>'+escapeHtml(a.username)+'</td><td>'+(a.role==='teacher'?'教师':(a.role==='article_admin'?'文章管理员':'学生'))+'</td><td>'+escapeHtml(tname)+'</td><td>'+(a.createdAt?new Date(a.createdAt).toLocaleString():'—')+'</td><td>'+(a.role==='article_admin'?'—':'<button type="button" class="itr-link" data-del="'+escapeHtml(a.id)+'">删除</button>')+'</td></tr>';
     });
     html+='</tbody></table>';
     var c=document.getElementById('itr-admin-content'); if(c) c.innerHTML=html;
+    var createArticleAdmin=c&&c.querySelector('#itr-article-admin-create');
+    if(createArticleAdmin) createArticleAdmin.addEventListener('click',function(){ var user=c.querySelector('#itr-article-admin-user').value.trim(), pass=c.querySelector('#itr-article-admin-pass').value, msg=c.querySelector('#itr-article-admin-msg'); if(user.length<2||pass.length<6){msg.textContent='账号至少 2 位，密码至少 6 位。';return;} createArticleAdmin.disabled=true;msg.textContent='创建中…'; apiV2('/admin/accounts/article-admin',{method:'POST',body:JSON.stringify({username:user,password:pass,role:'article_admin'})}).then(function(res){ if(res.state)applyServerState(res.state); if(res.user){ serverState.accounts=(getAccounts()||[]).filter(function(a){return String(a.id)!==String(res.user.id);}); serverState.accounts.push(res.user); } msg.textContent='服务器已确认创建。'; c.querySelector('#itr-article-admin-pass').value=''; renderAdminAccounts(); }).catch(function(err){ createArticleAdmin.disabled=false; msg.textContent='创建失败：'+(err.message||'服务器未确认'); }); });
     if(c) c.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(){ var id=b.getAttribute('data-del'); if(confirm('确定删除该账号？其错题记录/词汇收藏/成绩将一并丢失。')){ saveAccounts(getAccounts().filter(function(x){return x.id!==id;})); renderAdminAccounts(); } }); });
   }
   function showClassStudents(clsId){
@@ -6993,13 +6999,15 @@ function showRoleGate() {
     addSelectionToVBook:addSelectionToVBook, filterVocabList:filterVocabList, getVocabFilterOptions:getVocabFilterOptions,
     getSelectedQuestionTypes:getSelectedQuestionTypes, buildPrompt:buildPrompt, buildGenerationBatches:buildGenerationBatches,
     showClassStudents:showClassStudents, currentStudent:currentStudent, buildStudentSelect:buildStudentSelect,
-    doGenerate:doGenerate, apiGenerate:apiGenerate, PROVIDERS:PROVIDERS
+    doGenerate:doGenerate, apiGenerate:apiGenerate, PROVIDERS:PROVIDERS,
+    loadArticles:loadArticles, articleListFromResponse:articleListFromResponse
   };
   function bootstrapBackend(){
     return apiV2('/bootstrap').then(function(res){
-      applyServerState(res.state); serverAdmin=!!res.admin; setSession(res.user || null);
+      applyServerState(res.state); serverAdmin=!!(res.admin || res.article_admin); serverAdminUser=(res.user && (res.user.role==='admin'||res.user.role==='article_admin')) ? res.user : null; applyAdminNavigation(); setSession(res.user || null);
       uiMemory.settings=cloneData(loadSettingsRaw(),{});
       loadSettings(); initTheme(); initRole(); migrateLegacyBrowserData(); refreshAssignmentSummary();
+      if (serverAdmin && serverAdminUser) { hideAuthGate(); hideRoleGate(); hideAdminGate(); showAdminPanel(); }
       if (serverAdmin && getParam('feishu_oauth') === 'success') { hideAdminGate(); showAdminPanel(); renderAdmin('feishu'); }
     }).catch(function(err){
       clearSession(); showAuthGate(true); hideRoleGate();

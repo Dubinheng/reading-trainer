@@ -359,6 +359,33 @@ def test_teacher_and_student_top_tabs_have_role_scoped_defs():
     assert "#itr-app .itr-tab-main { display: flex; gap: 8px;" in source
 
 
+def test_article_resources_use_server_crud_without_favorite_or_teacher_duplicates():
+    source = FRONTEND.read_text(encoding="utf-8")
+    library = _function_source(source, "buildLibraryPanel", "storageDescriptor")
+    seed = _function_source(source, "seedDefaultSystemArticles", "updateArticle")
+    assert "apiV2('/articles'" in source
+    assert "apiV2('/articles/seed-defaults'" in seed
+    assert "articleState.systemInitialized" in seed
+    assert "＋ 添加个人文章" in library
+    assert "系统文章" in library and "个人文章" in library
+    assert 'id="itr-fav-btn"' not in source
+    assert "function saveFavorite(" not in source
+    assert 'data-tc="library"' not in source
+    assert 'id="tc-panel-library"' not in source
+    assert "syncAllToFeishu();" in _function_source(source, "createArticle", "seedDefaultSystemArticles")
+
+
+def test_article_admin_navigation_is_article_only_and_account_creation_is_server_backed():
+    source = FRONTEND.read_text(encoding="utf-8")
+    navigation = _function_source(source, "applyAdminNavigation", "showAdminGate")
+    accounts = _function_source(source, "renderAdminAccounts", "showClassStudents")
+    assert "adminIsArticleOnly()" in navigation
+    assert "data-adm') === 'articles'" in navigation
+    assert "apiV2('/admin/accounts/article-admin'" in accounts
+    assert "创建文章管理员" in accounts
+    assert 'data-adm="articles"' in source
+
+
 def test_teacher_practice_has_no_vocab_or_wrongbook_controls():
     source = FRONTEND.read_text(encoding="utf-8")
     render_question = _function_source(source, "renderQuestion", "checkQuestion")

@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 
 from flask import Flask
 
@@ -452,6 +453,184 @@ def test_expired_feishu_access_token_is_refreshed_only_on_server(tmp_path):
     assert stored["access_token"] == "new-access"
     assert stored["refresh_token"] == "new-refresh"
     assert os.stat(token_path).st_mode & 0o777 == 0o600
+
+
+def test_article_resources_are_role_scoped_and_audited(tmp_path):
+    app = make_app(tmp_path)
+    owner = app.test_client()
+    other = app.test_client()
+    admin = app.test_client()
+    article_admin = app.test_client()
+
+    owner_registration = register(owner, "article-owner")
+    owner_id = owner_registration.get_json()["user"]["id"]
+    register(other, "article-other")
+    personal = owner.post(
+        "/reading-trainer/api/v2/articles",
+        json={"id": "legacy_browser_fixed", "scope": "personal", "title": "Private", "content": "Owner text", "level": 2, "category": "Mine"},
+    )
+    assert personal.status_code == 201
+    personal_id = personal.get_json()["article"]["id"]
+    repeated_personal = owner.post(
+        "/reading-trainer/api/v2/articles",
+        json={"id": "legacy_browser_fixed", "scope": "personal", "title": "Private", "content": "Owner text", "level": 2, "category": "Mine"},
+    )
+    assert repeated_personal.status_code == 201
+    assert repeated_personal.get_json()["article"]["id"] == personal_id
+    assert other.post(
+        "/reading-trainer/api/v2/articles",
+        json={"id": "legacy_browser_fixed", "scope": "personal", "title": "Collision", "content": "Other text"},
+    ).status_code == 400
+    assert owner.post(
+        "/reading-trainer/api/v2/articles",
+        json={"scope": "system", "title": "Denied", "content": "No"},
+    ).status_code == 403
+    assert personal_id not in {item["id"] for item in other.get("/reading-trainer/api/v2/articles").get_json()["articles"]}
+
+    admin_login(admin)
+    created_account = admin.post(
+        "/reading-trainer/api/v2/admin/accounts/article-admin",
+        json={"username": "article-manager", "password": "manager-password"},
+    )
+    assert created_account.status_code == 201
+    manager_id = created_account.get_json()["user"]["id"]
+    manager_login = article_admin.post(
+        "/reading-trainer/api/v2/admin/login",
+        json={"username": "article-manager", "password": "manager-password"},
+    )
+    assert manager_login.status_code == 200
+    assert manager_login.get_json()["article_admin"] is True
+    assert manager_login.get_json()["state"]["accounts"] == []
+    assert article_admin.get("/reading-trainer/api/v2/admin/usage").status_code == 403
+    assert article_admin.get("/reading-trainer/api/v2/data/library").status_code == 403
+    assert article_admin.post(
+        "/reading-trainer/api/v2/articles",
+        json={"scope": "personal", "title": "Denied", "content": "No"},
+    ).status_code == 403
+
+    created = article_admin.post(
+        "/reading-trainer/api/v2/articles",
+        json={"scope": "system", "title": "Shared", "content": "System text", "level": 4, "category": "Science"},
+    )
+    assert created.status_code == 201
+    article_id = created.get_json()["article"]["id"]
+    assert created.get_json()["article"]["createdBy"] == manager_id
+    visible = article_admin.get("/reading-trainer/api/v2/articles").get_json()
+    assert {item["id"] for item in visible["articles"]} == {article_id}
+    assert visible["personal"] == []
+
+    updated = article_admin.patch(
+        f"/reading-trainer/api/v2/articles/{article_id}",
+        json={"title": "Shared updated", "content": "Updated system text", "level": 5},
+    )
+    assert updated.status_code == 200
+    assert updated.get_json()["article"]["updatedByName"] == "article-manager"
+    assert article_admin.delete(f"/reading-trainer/api/v2/articles/{personal_id}").status_code == 404
+    assert article_admin.delete(f"/reading-trainer/api/v2/articles/{article_id}").status_code == 200
+
+    audit = admin.get(f"/reading-trainer/api/v2/articles/{article_id}/audit")
+    assert audit.status_code == 200
+    events = audit.get_json()["events"]
+    assert [event["action"] for event in events] == ["delete", "update", "create"]
+    assert all(event["actor_user_id"] == manager_id for event in events)
+    assert all(isinstance(event["created_at"], int) and event["created_at"] > 0 for event in events)
+    assert owner.get(f"/reading-trainer/api/v2/articles/{article_id}/audit").status_code == 403
+    assert owner.get(f"/reading-trainer/api/v2/articles/{personal_id}").get_json()["article"]["ownerId"] == owner_id
+
+
+def test_default_system_articles_seed_only_once(tmp_path):
+    app = make_app(tmp_path)
+    admin = app.test_client()
+    admin_login(admin)
+    defaults = [
+        {"title": "One", "content": "First shipped article.", "level": 1, "category": "A"},
+        {"title": "Two", "content": "Second shipped article.", "level": 2, "category": "B"},
+    ]
+    seeded = admin.post("/reading-trainer/api/v2/articles/seed-defaults", json={"articles": defaults})
+    assert seeded.status_code == 200
+    assert seeded.get_json()["created"] == 2
+    ids = [item["id"] for item in seeded.get_json()["system"]]
+    assert all(item_id.startswith("builtin_") for item_id in ids)
+    for article_id in ids:
+        assert admin.delete(f"/reading-trainer/api/v2/articles/{article_id}").status_code == 200
+
+    repeated = admin.post("/reading-trainer/api/v2/articles/seed-defaults", json={"articles": defaults})
+    assert repeated.status_code == 200
+    assert repeated.get_json()["seeded"] is False
+    assert repeated.get_json()["created"] == 0
+    listing = admin.get("/reading-trainer/api/v2/articles?scope=system").get_json()
+    assert listing["systemInitialized"] is True
+    assert listing["system"] == []
+
+
+def test_legacy_article_id_never_matches_a_different_article(tmp_path):
+    app = make_app(tmp_path)
+    client = app.test_client()
+    registration = register(client, "legacy-article-owner")
+    owner_id = registration.get_json()["user"]["id"]
+    store = app.extensions["reading_trainer_v2"]["store"]
+    originals = [
+        {"title": "Legacy one", "text": "First legacy text"},
+        {"title": "Legacy two", "text": "Second legacy text"},
+    ]
+    store.put_document(owner_id, "favorites", originals)
+
+    missing_id = f"legacy_favorites_{owner_id}_99"
+    assert client.get(f"/reading-trainer/api/v2/articles/{missing_id}").status_code == 404
+    assert client.delete(f"/reading-trainer/api/v2/articles/{missing_id}").status_code == 404
+    first_id = f"legacy_favorites_{owner_id}_0"
+    assert client.get(f"/reading-trainer/api/v2/articles/{first_id}").get_json()["article"]["title"] == "Legacy one"
+    assert client.delete(f"/reading-trainer/api/v2/articles/{first_id}").status_code == 404
+    assert store.get_document(owner_id, "favorites") == originals
+
+
+def test_existing_three_role_users_table_migrates_without_data_loss(tmp_path):
+    db_path = tmp_path / "reading_trainer.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
+                password_hash TEXT NOT NULL DEFAULT '',
+                created_by TEXT,
+                class_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE (username COLLATE NOCASE, role)
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("stu_existing", "existing-user", "student", "legacy_sha256$" + "0" * 64, None, None, 1, 1),
+        )
+
+    app = make_app(tmp_path)
+    store = app.extensions["reading_trainer_v2"]["store"]
+    assert store.get_user("stu_existing")["username"] == "existing-user"
+    with sqlite3.connect(db_path) as connection:
+        schema = connection.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()[0]
+    assert "article_admin" in schema
+
+
+def test_article_feishu_key_is_idempotent_and_never_deletes(tmp_path):
+    app = make_app(tmp_path)
+    admin = app.test_client()
+    admin_login(admin)
+    created = admin.post(
+        "/reading-trainer/api/v2/articles",
+        json={"scope": "system", "title": "Mirror", "content": "Full mirrored text", "level": 3},
+    ).get_json()["article"]
+    store = app.extensions["reading_trainer_v2"]["store"]
+    first = build_feishu_sync_plan(store)
+    library = first["tables"]["library"]
+    row = next(item for item in library["creates"] if item["business_key"] == f"articles:{created['id']}")
+    assert json.loads(row["fields"]["数据JSON"])["content"] == "Full mirrored text"
+    remote = {"library": [{"record_id": "rec_article", "fields": row["fields"]}]}
+    second = build_feishu_sync_plan(store, remote)
+    assert not any(item["business_key"] == row["business_key"] for item in second["tables"]["library"]["creates"])
+    assert second["totals"]["deletes"] == 0
+    assert second["tables"]["library"]["deletes"] == []
 
 
 def test_ai_test_returns_safe_actionable_upstream_error(tmp_path):
