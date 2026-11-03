@@ -37,8 +37,7 @@ python3 -m pytest -q server/tests
 python3 scripts/check_production_health.py
 ```
 
-该检查会同时验证正式网页和 `/reading-trainer/api/v2/bootstrap`。如果接口返回
-404，说明宿主程序遗漏了 `register_reading_trainer_v2(app)`，不能把这次部署视为成功。
+该检查分别验证正式入口、实际阅读页和 `/reading-trainer/api/v2/bootstrap`，并打印每一项的耗时。遇到间歇加载失败时，可运行 `python3 scripts/check_production_health.py --samples 5`。如果启动接口返回 404，先检查宿主程序是否仍挂载 `register_reading_trainer_v2(app)`。
 
 `WORKBUDDY_REPORT.md` 和 `REPORT.md` 中关于 localStorage 的段落属于改造前历史记录，不能作为当前架构依据。
 

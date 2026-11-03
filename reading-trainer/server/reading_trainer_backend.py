@@ -24,6 +24,7 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping
+from contextlib import closing, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -67,6 +68,15 @@ AI_TIMEOUT_MIN_SECONDS = 30
 AI_TIMEOUT_MAX_SECONDS = 300
 AI_MAX_TOKENS_MIN = 256
 AI_MAX_TOKENS_MAX = 8192
+
+# Assignment drafts are intentionally small, student-owned recovery state.
+# Keep the limits independent from the much larger assignment-card payload so
+# a malformed PATCH cannot turn one recipient row into an unbounded blob.
+DRAFT_MAX_ANSWER_BYTES = 64 * 1024
+DRAFT_MAX_TOTAL_BYTES = 512 * 1024
+DRAFT_MAX_VIEWED_VOCAB_IDS = 500
+DRAFT_MAX_NESTING = 8
+DRAFT_MAX_COLLECTION_ITEMS = 200
 
 # These identifiers are the ones used by the existing remote app.py.  They
 # are identifiers, not credentials.  Every value can be overridden with a
@@ -239,6 +249,10 @@ def _default_path(config_value: Any, env_name: str, default: Path) -> Path:
     return Path(configured).expanduser().resolve()
 
 
+class AssignmentDraftConflict(Exception):
+    """The submitted page no longer matches the saved answers."""
+
+
 class ReadingTrainerStore:
     """SQLite persistence for auth, documents, and migration metadata."""
 
@@ -370,6 +384,9 @@ class ReadingTrainerStore:
                     submitted_at INTEGER,
                     answers_json TEXT,
                     result_json TEXT,
+                    draft_answers_json TEXT NOT NULL DEFAULT '{}',
+                    draft_viewed_vocab_ids_json TEXT NOT NULL DEFAULT '[]',
+                    draft_revision INTEGER NOT NULL DEFAULT 0,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL,
                     PRIMARY KEY (assignment_id, student_id),
@@ -473,6 +490,19 @@ class ReadingTrainerStore:
             ):
                 try:
                     connection.execute(f"ALTER TABLE assignments ADD COLUMN {column} {definition}")
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
+            # Student answer recovery is additive recipient state.  Drafts do
+            # not get their own entity and are deliberately excluded from the
+            # assignment/Feishu projection below.
+            for column, definition in (
+                ("draft_answers_json", "TEXT NOT NULL DEFAULT '{}'"),
+                ("draft_viewed_vocab_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("draft_revision", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                try:
+                    connection.execute(f"ALTER TABLE assignment_recipients ADD COLUMN {column} {definition}")
                 except sqlite3.OperationalError as exc:
                     if "duplicate column name" not in str(exc).lower():
                         raise
@@ -603,9 +633,11 @@ class ReadingTrainerStore:
             )
         return clean
 
-    def get_document(self, owner_id: str, section: str, default: Any = None) -> Any:
-        with self.connect() as connection:
-            row = connection.execute(
+    def get_document(
+        self, owner_id: str, section: str, default: Any = None, *, connection: sqlite3.Connection | None = None
+    ) -> Any:
+        with closing(self.connect()) if connection is None else nullcontext(connection) as reader:
+            row = reader.execute(
                 "SELECT data_json FROM documents WHERE owner_id = ? AND section = ?",
                 (owner_id, section),
             ).fetchone()
@@ -623,7 +655,8 @@ class ReadingTrainerStore:
             normalized = _normalize_wbook_items(value)
             if normalized != value:
                 try:
-                    self.put_document(owner_id, section, normalized)
+                    writer = connection if connection is not None and connection.in_transaction else None
+                    self.put_document(owner_id, section, normalized, connection=writer)
                 except (TypeError, ValueError):
                     # A read must never fail just because a legacy document is
                     # too large to rewrite; return the lossless projection.
@@ -631,14 +664,16 @@ class ReadingTrainerStore:
             value = normalized
         return value
 
-    def put_document(self, owner_id: str, section: str, data: Any) -> Any:
+    def put_document(
+        self, owner_id: str, section: str, data: Any, *, connection: sqlite3.Connection | None = None
+    ) -> Any:
         clean = sanitize_json(data)
         serialized = _json_dumps(clean)
         if len(serialized.encode("utf-8")) > 5 * 1024 * 1024:
             raise ValueError("document is too large")
         now = _now()
-        with self.connect() as connection:
-            connection.execute(
+        with self.connect() if connection is None else nullcontext(connection) as writer:
+            writer.execute(
                 "INSERT INTO documents(owner_id, section, data_json, updated_at) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(owner_id, section) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at",
                 (owner_id, section, serialized, now),
@@ -1022,6 +1057,8 @@ class ReadingTrainerStore:
         student_id: str,
         assignment: Mapping[str, Any],
         result: Mapping[str, Any],
+        *,
+        connection: sqlite3.Connection | None = None,
     ) -> dict[str, int]:
         """Apply a review assignment's question outcomes to the student's book."""
 
@@ -1039,8 +1076,10 @@ class ReadingTrainerStore:
         }
         now_ms = int(time.time() * 1000)
         created = updated = 0
-        with self.connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        own_transaction = connection is None
+        with self.connect() if own_transaction else nullcontext(connection) as connection:
+            if own_transaction:
+                connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT data_json FROM documents WHERE owner_id = ? AND section = ?",
                 (student_id, "wbook"),
@@ -1606,6 +1645,8 @@ class ReadingTrainerStore:
         event_type: str,
         metadata: Mapping[str, Any] | None = None,
         duration_ms: int | None = None,
+        *,
+        connection: sqlite3.Connection | None = None,
     ) -> None:
         """Persist a privacy-safe product-usage event for the admin dashboard.
 
@@ -1627,8 +1668,8 @@ class ReadingTrainerStore:
                     clean_meta[key_text] = value
         now = _now()
         event_date = datetime.fromtimestamp(now, timezone.utc).date().isoformat()
-        with self.connect() as connection:
-            connection.execute(
+        with self.connect() if connection is None else nullcontext(connection) as writer:
+            writer.execute(
                 "INSERT INTO usage_events(event_id,user_id,event_type,event_date,duration_ms,meta_json,created_at) VALUES (?,?,?,?,?,?,?)",
                 (
                     "ue_" + uuid.uuid4().hex,
@@ -1895,7 +1936,15 @@ class ReadingTrainerStore:
         if teacher_id == owner_id:
             return True
         owner = self.get_user(owner_id)
-        if not owner:
+        return bool(owner and self._teacher_can_access_student(teacher_id, owner))
+
+    def _teacher_can_access_student(
+        self,
+        teacher_id: str,
+        owner: Mapping[str, Any],
+        active_classes: Iterable[Mapping[str, Any]] | None = None,
+    ) -> bool:
+        if _safe_text(owner.get("status"), 40).lower() not in ("", "active"):
             return False
         if owner.get("role") != "student":
             return False
@@ -1906,7 +1955,8 @@ class ReadingTrainerStore:
         # have not been assigned to a class yet.
         class_id = owner.get("class_id")
         if class_id:
-            for item in self.list_classes():
+            classes = active_classes if active_classes is not None else self.list_classes()
+            for item in classes:
                 if str(item.get("id")) == str(class_id) and str(
                     item.get("teacherId") or item.get("teacher_id") or ""
                 ) == str(teacher_id):
@@ -2035,6 +2085,217 @@ class ReadingTrainerStore:
         if answers is not None:
             item["answers"] = sanitize_json(answers)
         return item
+
+    @classmethod
+    def _draft_row(cls, row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
+        """Decode only recovery state; never include assignment answer keys."""
+
+        def value(name: str, default: Any = None) -> Any:
+            try:
+                return row[name]  # type: ignore[index]
+            except (KeyError, IndexError, TypeError):
+                return default
+
+        raw_answers = cls._decode_json(value("draft_answers_json"), {})
+        if not isinstance(raw_answers, Mapping):
+            raw_answers = {}
+        answers: dict[str, Any] = {}
+        for key, answer in raw_answers.items():
+            question_id = _safe_text(key, 200)
+            if question_id:
+                answers[question_id] = sanitize_json(answer)
+        raw_viewed = cls._decode_json(value("draft_viewed_vocab_ids_json"), [])
+        if not isinstance(raw_viewed, list):
+            raw_viewed = []
+        viewed: list[str] = []
+        for item in raw_viewed:
+            item_id = _safe_text(item, 200)
+            if item_id and item_id not in viewed:
+                viewed.append(item_id)
+            if len(viewed) >= DRAFT_MAX_VIEWED_VOCAB_IDS:
+                break
+        try:
+            revision = max(0, int(value("draft_revision", 0) or 0))
+        except (TypeError, ValueError, OverflowError):
+            revision = 0
+        return {"answers": answers, "viewedVocabIds": viewed, "revision": revision}
+
+    @classmethod
+    def _draft_with_checked_answers(
+        cls,
+        connection: sqlite3.Connection,
+        assignment_id: str,
+        student_id: str,
+        draft: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Include the student's own first-check answers without its results."""
+
+        result = {
+            "answers": dict(draft.get("answers", {})) if isinstance(draft.get("answers"), Mapping) else {},
+            "viewedVocabIds": list(draft.get("viewedVocabIds", [])),
+            "revision": int(draft.get("revision", 0) or 0),
+        }
+        rows = connection.execute(
+            "SELECT question_id, answer_json FROM assignment_question_checks "
+            "WHERE assignment_id = ? AND student_id = ? ORDER BY question_id",
+            (assignment_id, student_id),
+        ).fetchall()
+        checked_ids = []
+        for row in rows:
+            question_id = _safe_text(row["question_id"], 200)
+            if not question_id:
+                continue
+            checked_ids.append(question_id)
+            result["answers"][question_id] = sanitize_json(cls._decode_json(row["answer_json"], None))
+        if checked_ids:
+            result["checkedQuestionIds"] = checked_ids
+        return result
+
+    def get_assignment_draft(
+        self, assignment_id: str, student_id: str, *, connection: sqlite3.Connection | None = None
+    ) -> dict[str, Any] | None:
+        """Read one recipient's draft with an assignment/student scope."""
+
+        assignment_id = _safe_text(assignment_id, 200)
+        student_id = _safe_text(student_id, 200)
+        if not assignment_id or not student_id:
+            return None
+        with closing(self.connect()) if connection is None else nullcontext(connection) as reader:
+            row = reader.execute(
+                "SELECT status, draft_answers_json, draft_viewed_vocab_ids_json, draft_revision "
+                "FROM assignment_recipients WHERE assignment_id = ? AND student_id = ?",
+                (assignment_id, student_id),
+            ).fetchone()
+            if not row:
+                return None
+            # A separately checked answer is already durable server state.  It
+            # is safe to restore the student's value, but never the check
+            # result or trusted answer key.
+            draft = self._draft_with_checked_answers(
+                reader,
+                assignment_id,
+                student_id,
+                self._draft_row(row),
+            )
+        return {
+            "draft": draft,
+            "submitted": str(row["status"] or "") == "submitted",
+        }
+
+    def update_assignment_draft(
+        self,
+        assignment_id: str,
+        student_id: str,
+        *,
+        expected_revision: int,
+        answer_changes: Mapping[str, Any],
+        viewed_vocab_ids: Iterable[str],
+    ) -> dict[str, Any] | None:
+        """Atomically merge one student draft with optimistic concurrency."""
+
+        assignment_id = _safe_text(assignment_id, 200)
+        student_id = _safe_text(student_id, 200)
+        if not assignment_id or not student_id:
+            return None
+        try:
+            expected_revision = int(expected_revision)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("draft revision is invalid") from None
+        if expected_revision < 0:
+            raise ValueError("draft revision is invalid")
+        if not isinstance(answer_changes, Mapping):
+            raise ValueError("draft answers must be an object")
+        if not isinstance(viewed_vocab_ids, (list, tuple, set)):
+            raise ValueError("viewed vocabulary ids must be an array")
+
+        clean_changes: dict[str, Any] = {}
+        for key, value in answer_changes.items():
+            question_id = _safe_text(key, 200)
+            if not question_id or question_id != str(key).strip():
+                raise ValueError("draft question id is invalid")
+            clean_value = sanitize_json(value)
+            _validate_draft_json(clean_value)
+            if len(_json_dumps(clean_value).encode("utf-8")) > DRAFT_MAX_ANSWER_BYTES:
+                raise ValueError("draft answer is too large")
+            clean_changes[question_id] = clean_value
+        if len(clean_changes) > DRAFT_MAX_COLLECTION_ITEMS:
+            raise ValueError("draft has too many answers")
+
+        clean_viewed: list[str] = []
+        for item in viewed_vocab_ids:
+            if not isinstance(item, (str, int)) or isinstance(item, bool):
+                raise ValueError("viewed vocabulary id is invalid")
+            item_id = _safe_text(item, 200)
+            if not item_id or item_id != str(item).strip():
+                raise ValueError("viewed vocabulary id is invalid")
+            if item_id not in clean_viewed:
+                clean_viewed.append(item_id)
+        if len(clean_viewed) > DRAFT_MAX_VIEWED_VOCAB_IDS:
+            raise ValueError("too many viewed vocabulary ids")
+
+        with self.connect() as connection:
+            # Lock before checking recipient status/revision so submit and
+            # concurrent PATCH calls cannot pass the same check.
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status, draft_answers_json, draft_viewed_vocab_ids_json, draft_revision "
+                "FROM assignment_recipients WHERE assignment_id = ? AND student_id = ?",
+                (assignment_id, student_id),
+            ).fetchone()
+            if not row:
+                return None
+            persisted = self._draft_row(row)
+            current = self._draft_with_checked_answers(connection, assignment_id, student_id, persisted)
+            checked_answers = {
+                question_id: current["answers"][question_id]
+                for question_id in current.get("checkedQuestionIds", [])
+            }
+            submitted = str(row["status"] or "") == "submitted"
+            if submitted:
+                return {"state": "submitted", "draft": current, "submitted": True}
+            if int(current["revision"]) != expected_revision:
+                return {"state": "conflict", "draft": current, "submitted": False}
+
+            merged_answers = dict(persisted["answers"])
+            for question_id, value in clean_changes.items():
+                if question_id in checked_answers:
+                    continue
+                if _draft_value_is_empty(value):
+                    merged_answers.pop(question_id, None)
+                else:
+                    merged_answers[question_id] = value
+            merged_viewed = list(current["viewedVocabIds"])
+            for item_id in clean_viewed:
+                if item_id not in merged_viewed:
+                    merged_viewed.append(item_id)
+            encoded_answers = _json_dumps(sanitize_json(merged_answers))
+            encoded_viewed = _json_dumps(merged_viewed)
+            if len(encoded_answers.encode("utf-8")) + len(encoded_viewed.encode("utf-8")) > DRAFT_MAX_TOTAL_BYTES:
+                raise ValueError("draft is too large")
+            changed = merged_answers != persisted["answers"] or merged_viewed != persisted["viewedVocabIds"]
+            revision = int(persisted["revision"]) + 1 if changed else int(persisted["revision"])
+            if changed:
+                now = _now()
+                connection.execute(
+                    "UPDATE assignment_recipients SET draft_answers_json = ?, draft_viewed_vocab_ids_json = ?, "
+                    "draft_revision = ?, updated_at = ? WHERE assignment_id = ? AND student_id = ? "
+                    "AND status <> 'submitted' AND draft_revision = ?",
+                    (
+                        encoded_answers,
+                        encoded_viewed,
+                        revision,
+                        now,
+                        assignment_id,
+                        student_id,
+                        int(persisted["revision"]),
+                    ),
+                )
+            return {
+                "state": "updated",
+                "draft": {**current, "answers": {**merged_answers, **checked_answers},
+                          "viewedVocabIds": merged_viewed, "revision": revision},
+                "submitted": False,
+            }
 
     def _assignment_recipients(self, assignment_id: str, student_id: str | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM assignment_recipients WHERE assignment_id = ?"
@@ -2256,14 +2517,14 @@ class ReadingTrainerStore:
         return self._question_check_row(row) if row else None
 
     def list_assignment_question_checks(
-        self, assignment_id: str, student_id: str
+        self, assignment_id: str, student_id: str, *, connection: sqlite3.Connection | None = None
     ) -> dict[str, dict[str, Any]]:
         assignment_id = _safe_text(assignment_id, 200)
         student_id = _safe_text(student_id, 200)
         if not assignment_id or not student_id:
             return {}
-        with self.connect() as connection:
-            rows = connection.execute(
+        with closing(self.connect()) if connection is None else nullcontext(connection) as reader:
+            rows = reader.execute(
                 "SELECT * FROM assignment_question_checks "
                 "WHERE assignment_id = ? AND student_id = ? ORDER BY question_id",
                 (assignment_id, student_id),
@@ -2281,6 +2542,8 @@ class ReadingTrainerStore:
         question_id: str,
         answer: Any,
         result: Mapping[str, Any],
+        *,
+        connection: sqlite3.Connection | None = None,
     ) -> tuple[dict[str, Any] | None, bool]:
         """Save a student's first score for a question.
 
@@ -2297,24 +2560,19 @@ class ReadingTrainerStore:
         now = _now()
         encoded_answer = _json_dumps(sanitize_json(answer))
         encoded_result = _json_dumps(sanitize_json(dict(result)))
-        with self.connect() as connection:
-            before = connection.execute(
-                "SELECT 1 FROM assignment_question_checks "
-                "WHERE assignment_id = ? AND student_id = ? AND question_id = ?",
-                (assignment_id, student_id, question_id),
-            ).fetchone()
-            connection.execute(
+        with self.connect() if connection is None else nullcontext(connection) as writer:
+            inserted = writer.execute(
                 "INSERT OR IGNORE INTO assignment_question_checks "
                 "(assignment_id, student_id, question_id, answer_json, result_json, checked_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (assignment_id, student_id, question_id, encoded_answer, encoded_result, now, now),
-            )
-            row = connection.execute(
+            ).rowcount
+            row = writer.execute(
                 "SELECT * FROM assignment_question_checks "
                 "WHERE assignment_id = ? AND student_id = ? AND question_id = ?",
                 (assignment_id, student_id, question_id),
             ).fetchone()
-        return (self._question_check_row(row) if row else None), bool(before)
+        return (self._question_check_row(row) if row else None), not inserted
 
     def record_assignment_outcomes(
         self,
@@ -2324,6 +2582,7 @@ class ReadingTrainerStore:
         assignment: Mapping[str, Any] | None = None,
         *,
         include_wrong: bool = True,
+        connection: sqlite3.Connection | None = None,
     ) -> dict[str, int]:
         """Write a first submission to the student's existing grade/wrong books.
 
@@ -2346,7 +2605,7 @@ class ReadingTrainerStore:
             (assignment_data.get("title") or assignment_data.get("name")) if assignment_data else "",
             500,
         )
-        grades = self.get_document(student_id, "grades", [])
+        grades = self.get_document(student_id, "grades", [], connection=connection)
         grades = list(grades) if isinstance(grades, list) else []
         grade_exists = any(
             isinstance(item, Mapping)
@@ -2372,7 +2631,7 @@ class ReadingTrainerStore:
                     "byExam": clean_result.get("byExam", {}),
                 }
             )
-            self.put_document(student_id, "grades", grades)
+            self.put_document(student_id, "grades", grades, connection=connection)
             grade_written = 1
 
         wrong_items = clean_result.get("wrong", []) if isinstance(clean_result, Mapping) else []
@@ -2383,7 +2642,7 @@ class ReadingTrainerStore:
             # which has the authoritative source item linkage and streak
             # semantics.  Avoid creating a second synthetic wrong-book row.
             wrong_items = []
-        wrong_book = self.get_document(student_id, "wbook", [])
+        wrong_book = self.get_document(student_id, "wbook", [], connection=connection)
         wrong_book = _normalize_wbook_items(wrong_book)
         wrong_written = 0
         if isinstance(wrong_items, list):
@@ -2467,44 +2726,95 @@ class ReadingTrainerStore:
                 existing_keys.add(key)
                 wrong_written += 1
             if wrong_written:
-                self.put_document(student_id, "wbook", wrong_book[:150])
+                self.put_document(student_id, "wbook", wrong_book[:150], connection=connection)
         return {"grades": grade_written, "wrong": wrong_written}
 
     def submit_assignment(
         self,
-        assignment_id: str,
+        assignment: Mapping[str, Any],
         student_id: str,
         answers: Any,
-        result: Mapping[str, Any],
+        viewed_vocab_ids: Any = None,
+        *,
+        expected_revision: int | None = None,
     ) -> tuple[dict[str, Any] | None, bool]:
-        """Persist a submission and return ``(assignment, idempotent)``.
+        """Commit the answers, checks, grade and review updates together.
 
-        A previously submitted recipient is never overwritten, even when a
-        retried request carries a different answer payload.
+        Serialize concurrent draft updates and submits on the same database.
+        A retry after a lost response reads the existing result without
+        reapplying a review streak or recording a second submission.
         """
 
-        assignment_id = _safe_text(assignment_id, 200)
+        assignment_id = _safe_text(assignment.get("id"), 200)
         student_id = _safe_text(student_id, 200)
         if not assignment_id or not student_id:
             return None, False
-        now = _now()
-        encoded_answers = _json_dumps(sanitize_json(answers))
-        encoded_result = _json_dumps(sanitize_json(dict(result)))
         with self.connect() as connection:
-            row = connection.execute(
-                "SELECT status FROM assignment_recipients WHERE assignment_id = ? AND student_id = ?",
-                (assignment_id, student_id),
-            ).fetchone()
-            if not row:
+            connection.execute("BEGIN IMMEDIATE")
+            draft_state = self.get_assignment_draft(assignment_id, student_id, connection=connection)
+            if draft_state is None:
                 return None, False
-            if str(row[0]) == "submitted":
+            if draft_state["submitted"]:
                 return self.get_assignment(assignment_id, student_id=student_id), True
+            draft = draft_state["draft"]
+            if expected_revision is not None:
+                supplied = _assignment_answers_mapping(answers)
+                if expected_revision != draft["revision"] or any(
+                    question_id in supplied and not _answers_equal(supplied[question_id], draft["answers"][question_id])
+                    for question_id in draft.get("checkedQuestionIds", [])
+                ):
+                    raise AssignmentDraftConflict
+                answers = draft["answers"]
+                viewed_vocab_ids = draft["viewedVocabIds"]
+            elif draft["revision"] > 0:
+                # An older client may submit the saved draft, but cannot
+                # replace it with unversioned answers from a stale page.
+                supplied = _assignment_answers_mapping(answers)
+                if any(not (_draft_value_is_empty(answer) and _draft_value_is_empty(draft["answers"].get(question_id)))
+                       and not _answers_equal(answer, draft["answers"].get(question_id))
+                       for question_id, answer in supplied.items()):
+                    raise AssignmentDraftConflict
+                answers = draft["answers"]
+            elif isinstance(answers, Mapping):
+                # An explicit blank still overrides a previous draft. Omitted
+                # keys are restored from the student's own saved answers.
+                answers = {**draft["answers"], **answers}
+            first_checks = self.list_assignment_question_checks(assignment_id, student_id, connection=connection)
+            review = str(assignment.get("assignmentType") or assignment.get("assignment_type") or "").lower() == "review"
+            if review:
+                viewed = list(viewed_vocab_ids) if isinstance(viewed_vocab_ids, list) else []
+                viewed.extend(item for item in draft["viewedVocabIds"] if item not in viewed)
+                result = _grade_review_assignment(assignment, answers, viewed, first_checks)
+            else:
+                answers = _assignment_answers_mapping(answers)
+                answers.update({qid: check["answer"] for qid, check in first_checks.items() if "answer" in check})
+                result = _grade_assignment(assignment, answers, first_checks)
+            for record in result.get("records", []):
+                if not isinstance(record, Mapping) or (review and record.get("kind") != "question"):
+                    continue
+                self.save_assignment_question_check(
+                    assignment_id, student_id, str(record.get("questionId") or record.get("id") or ""),
+                    record.get("userAnswer"), record, connection=connection,
+                )
+            now = _now()
             connection.execute(
                 "UPDATE assignment_recipients SET status = 'submitted', unread = 0, opened_at = COALESCE(opened_at, ?), "
                 "submitted_at = ?, answers_json = ?, result_json = ?, updated_at = ? "
                 "WHERE assignment_id = ? AND student_id = ? AND status <> 'submitted'",
-                (now, now, encoded_answers, encoded_result, now, assignment_id, student_id),
+                (now, now, _json_dumps(sanitize_json(answers)), _json_dumps(sanitize_json(result)),
+                 now, assignment_id, student_id),
             )
+            total = int(result.get("total") or 0)
+            self.record_usage_event(
+                student_id, "assignment_submit", {"questionCount": total}, connection=connection
+            )
+            if review:
+                self.sync_review_outcomes(student_id, assignment, result, connection=connection)
+            if not review or total > 0:
+                self.record_assignment_outcomes(
+                    student_id, assignment_id, result, assignment=assignment,
+                    include_wrong=not review, connection=connection,
+                )
         return self.get_assignment(assignment_id, student_id=student_id), False
 
     def clear_expired_sessions(self) -> None:
@@ -3152,7 +3462,9 @@ def _local_feishu_records(store: ReadingTrainerStore) -> dict[str, list[dict[str
     # Assignments are a separate syncable entity.  One row per
     # assignment/student recipient gives Feishu a stable key even when one
     # teacher sends the same card to multiple students; submitted answers and
-    # result JSON remain server-derived data, never browser storage.
+    # result JSON remain server-derived data. Draft recovery columns are
+    # intentionally not selected here, so raw in-progress input never enters
+    # Feishu or the sync-plan JSON.
     with store.connect() as connection:
         rows = connection.execute(
             "SELECT a.id, a.teacher_id, a.title, a.instructions, a.questions_json, a.sections_json, a.settings_json, a.status, "
@@ -3417,6 +3729,96 @@ def _review_item_list(assignment: Mapping[str, Any]) -> list[dict[str, Any]]:
         clean["kind"] = "vocab" if kind == "vocab" else "question"
         result.append(clean)
     return result
+
+
+def _draft_value_is_empty(value: Any) -> bool:
+    """Return whether a browser answer represents an unanswered value.
+
+    The assignment UI uses an empty string for scalar controls, an all-empty
+    list for matching/heading/diagram controls, and an all-empty mapping for
+    sentence-end controls.  Treat all of those as a clear operation while
+    preserving partially completed compound answers.
+    """
+
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple)):
+        return not value or all(_draft_value_is_empty(item) for item in value)
+    if isinstance(value, Mapping):
+        return not value or all(_draft_value_is_empty(item) for item in value.values())
+    return False
+
+
+def _validate_draft_json(value: Any, *, depth: int = 0) -> None:
+    """Validate a bounded JSON answer before it enters recipient storage."""
+
+    if depth > DRAFT_MAX_NESTING:
+        raise ValueError("draft answer is too deeply nested")
+    if value is None or isinstance(value, (str, int, bool)):
+        if isinstance(value, str) and len(value.encode("utf-8")) > DRAFT_MAX_ANSWER_BYTES:
+            raise ValueError("draft answer is too large")
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("draft answer is not finite")
+        return
+    if isinstance(value, Mapping):
+        if len(value) > DRAFT_MAX_COLLECTION_ITEMS:
+            raise ValueError("draft answer has too many fields")
+        for key, item in value.items():
+            if not isinstance(key, str) or len(key.encode("utf-8")) > 200:
+                raise ValueError("draft answer field name is invalid")
+            _validate_draft_json(item, depth=depth + 1)
+        return
+    if isinstance(value, (list, tuple)):
+        if len(value) > DRAFT_MAX_COLLECTION_ITEMS:
+            raise ValueError("draft answer has too many values")
+        for item in value:
+            _validate_draft_json(item, depth=depth + 1)
+        return
+    raise ValueError("draft answer must be JSON-compatible")
+
+
+def _assignment_draft_question_map(assignment: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    """Return stable student-answer question IDs for either assignment type."""
+
+    assignment_type = _safe_text(
+        assignment.get("assignmentType") or assignment.get("assignment_type") or "question_card", 40
+    ).lower()
+    result: dict[str, Mapping[str, Any]] = {}
+    if assignment_type == "review":
+        for item in _review_item_list(assignment):
+            if str(item.get("kind")) != "question":
+                continue
+            question_id = _safe_text(item.get("id") or item.get("questionId"), 200)
+            if question_id:
+                raw_question = item.get("q") if isinstance(item.get("q"), Mapping) else item
+                result.setdefault(question_id, raw_question if isinstance(raw_question, Mapping) else {})
+        return result
+    for index, question in enumerate(_assignment_question_list(assignment)):
+        question_id = _assignment_question_id(question, index)
+        if question_id:
+            result.setdefault(question_id, question)
+    return result
+
+
+def _assignment_draft_vocab_ids(assignment: Mapping[str, Any]) -> set[str]:
+    """Return review vocabulary item IDs allowed in ``viewedVocabIds``."""
+
+    assignment_type = _safe_text(
+        assignment.get("assignmentType") or assignment.get("assignment_type") or "question_card", 40
+    ).lower()
+    if assignment_type != "review":
+        return set()
+    return {
+        question_id
+        for item in _review_item_list(assignment)
+        if str(item.get("kind")) == "vocab"
+        for question_id in [_safe_text(item.get("id"), 200)]
+        if question_id
+    }
 
 
 def _strip_internal_fields(value: Any) -> Any:
@@ -4185,12 +4587,16 @@ def _authorized_write_owner(principal: Mapping[str, Any], owner_id: str) -> bool
 
 def _set_session_cookie(response: Any, store: ReadingTrainerStore, token: str) -> Any:
     cookie_name = current_app.config.get("READING_TRAINER_SESSION_COOKIE", "reading_trainer_session")
+    # Production must fail closed: HTTPS sessions are Secure unless a local
+    # development/test configuration explicitly opts out.
+    secure_setting = current_app.config.get("READING_TRAINER_SESSION_SECURE")
+    secure = True if secure_setting is None else bool(secure_setting)
     response.set_cookie(
         cookie_name,
         token,
         max_age=store.session_ttl,
         httponly=True,
-        secure=bool(current_app.config.get("READING_TRAINER_SESSION_SECURE", False)),
+        secure=secure,
         samesite="Lax",
         path="/",
     )
@@ -4477,6 +4883,7 @@ def _state_snapshot(store: ReadingTrainerStore, principal: Mapping[str, Any] | N
         }
     all_users = [item for item in store.list_users() if item.get("role") != "admin"]
     all_public_users = [item for item in all_users if item.get("role") not in STAFF_ROLES]
+    all_classes = store.list_classes()
     if role == "admin":
         # Full administrators can see and manage article-admin accounts, but
         # never expose full admin credentials in the ordinary account list.
@@ -4484,7 +4891,7 @@ def _state_snapshot(store: ReadingTrainerStore, principal: Mapping[str, Any] | N
     elif role == "teacher":
         visible_users = [
             item for item in all_public_users
-            if str(item.get("id")) == principal_id or store.teacher_can_access(principal_id, str(item.get("id")))
+            if str(item.get("id")) == principal_id or store._teacher_can_access_student(principal_id, item, all_classes)
         ]
     elif role == "student":
         visible_users = [item for item in all_public_users if str(item.get("id")) == principal_id]
@@ -4492,7 +4899,6 @@ def _state_snapshot(store: ReadingTrainerStore, principal: Mapping[str, Any] | N
         visible_users = []
     accounts = [_safe_user(item) for item in visible_users]
 
-    all_classes = store.list_classes()
     if role == "admin":
         classes = all_classes
         invites = store.list_invites()
@@ -4511,15 +4917,20 @@ def _state_snapshot(store: ReadingTrainerStore, principal: Mapping[str, Any] | N
     if principal_id:
         owner_ids.add(principal_id)
     user_data: dict[str, dict[str, Any]] = {}
-    for owner_id in owner_ids:
-        data: dict[str, Any] = {}
-        for section_name in BUSINESS_SECTIONS:
-            default: Any = {} if section_name == "settings" else []
-            value = store.get_document(owner_id, section_name, None)
-            if value is None and section_name == "settings":
-                value = store.get_document(GLOBAL_OWNER_ID, section_name, default)
-            data[section_name] = value if value is not None else default
-        user_data[owner_id] = sanitize_json(data)
+    if owner_ids:
+        # Reuse one reader for this snapshot. In a teacher's bootstrap, the
+        # same class and global settings previously reopened SQLite per student.
+        with closing(store.connect()) as connection:
+            global_settings = store.get_document(GLOBAL_OWNER_ID, "settings", {}, connection=connection)
+            if global_settings is None:
+                global_settings = {}
+            for owner_id in owner_ids:
+                data: dict[str, Any] = {}
+                for section_name in BUSINESS_SECTIONS:
+                    default: Any = global_settings if section_name == "settings" else []
+                    value = store.get_document(owner_id, section_name, connection=connection)
+                    data[section_name] = value if value is not None else default
+                user_data[owner_id] = sanitize_json(data)
     return {
         "accounts": accounts,
         "invites": sanitize_json(invites),
@@ -4544,7 +4955,7 @@ def _create_blueprint(store: ReadingTrainerStore):
         public_user = _safe_user(user)
         if public_user is not None and membership is not None:
             public_user["membership"] = membership
-        return jsonify(
+        response = jsonify(
             {
                 "success": True,
                 "api_version": 2,
@@ -4560,6 +4971,10 @@ def _create_blueprint(store: ReadingTrainerStore):
                 "state": state,
             }
         )
+        response.cache_control.private = True
+        response.cache_control.no_store = True
+        response.vary.add("Cookie")
+        return response
 
     def _login(payload: Any, admin_only: bool = False):
         payload = payload if isinstance(payload, Mapping) else {}
@@ -5209,6 +5624,90 @@ def _create_blueprint(store: ReadingTrainerStore):
         visible = _assignment_view(store, assignment, user, detail=True)
         return jsonify({"ok": True, "assignment": visible, "data": visible, **visible})
 
+    @bp.route("/assignments/<assignment_id>/draft", methods=["GET", "PATCH"])
+    def assignment_draft(assignment_id: str):
+        """Read/merge one student's server-backed assignment recovery draft."""
+
+        user, error = _auth_required(store, ("student",))
+        if error:
+            return error
+        student_id = str(user["id"])
+        assignment = store.get_assignment(assignment_id, student_id=student_id)
+        if assignment is None:
+            return _assignment_not_found_or_forbidden(assignment_id, user)
+        current = store.get_assignment_draft(assignment_id, student_id)
+        if current is None:
+            return _assignment_not_found_or_forbidden(assignment_id, user)
+        if request.method == "GET":
+            return jsonify({"ok": True, "draft": current["draft"], "submitted": bool(current["submitted"])})
+        if current["submitted"]:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "draft": current["draft"],
+                        "submitted": True,
+                        "error": {"code": "assignment_submitted", "message": "assignment is already submitted"},
+                    }
+                ),
+                409,
+            )
+
+        payload = _json_body()
+        if not isinstance(payload, Mapping):
+            return _error("draft payload must be an object", 400, "invalid_draft_payload")
+        raw_revision = payload.get("revision", 0)
+        if isinstance(raw_revision, bool) or not isinstance(raw_revision, int) or raw_revision < 0:
+            return _error("draft revision is invalid", 400, "invalid_draft_revision")
+        raw_answers = payload.get("answers", {})
+        if raw_answers is None:
+            raw_answers = {}
+        if not isinstance(raw_answers, Mapping):
+            return _error("draft answers must be an object", 400, "invalid_draft_answers")
+        raw_viewed = payload.get("viewedVocabIds", payload.get("viewed_vocab_ids", []))
+        if raw_viewed is None:
+            raw_viewed = []
+        if not isinstance(raw_viewed, list):
+            return _error("viewed vocabulary ids must be an array", 400, "invalid_draft_vocab")
+
+        question_map = _assignment_draft_question_map(assignment)
+        for question_id in raw_answers:
+            normalized_id = _safe_text(question_id, 200)
+            if not normalized_id or normalized_id != str(question_id).strip() or normalized_id not in question_map:
+                return _error("question id is not part of this assignment", 400, "invalid_draft_question")
+        vocab_ids = _assignment_draft_vocab_ids(assignment)
+        for item in raw_viewed:
+            if not isinstance(item, (str, int)) or isinstance(item, bool):
+                return _error("viewed vocabulary id is invalid", 400, "invalid_draft_vocab")
+            normalized_id = _safe_text(item, 200)
+            if not normalized_id or normalized_id != str(item).strip() or normalized_id not in vocab_ids:
+                return _error("vocabulary id is not part of this assignment", 400, "invalid_draft_vocab")
+        try:
+            updated = store.update_assignment_draft(
+                assignment_id,
+                student_id,
+                expected_revision=raw_revision,
+                answer_changes=raw_answers,
+                viewed_vocab_ids=raw_viewed,
+            )
+        except ValueError as exc:
+            return _error(str(exc), 400, "invalid_draft_payload")
+        if updated is None:
+            return _assignment_not_found_or_forbidden(assignment_id, user)
+        response = {
+            "ok": updated.get("state") == "updated",
+            "draft": updated["draft"],
+            "submitted": bool(updated.get("submitted")),
+        }
+        state = str(updated.get("state") or "")
+        if state == "submitted":
+            response["error"] = {"code": "assignment_submitted", "message": "assignment is already submitted"}
+            return jsonify(response), 409
+        if state == "conflict":
+            response["error"] = {"code": "draft_revision_conflict", "message": "draft revision is stale"}
+            return jsonify(response), 409
+        return jsonify(response)
+
     @bp.post("/assignments/<assignment_id>/questions/<question_id>/check")
     def assignment_question_check(assignment_id: str, question_id: str):
         """Check exactly one question and retain the first scored attempt.
@@ -5311,78 +5810,23 @@ def _create_blueprint(store: ReadingTrainerStore):
         answers = payload.get("answers", payload.get("responses", payload.get("data", {})))
         if answers is None:
             answers = {}
-        assignment_type = _safe_text(assignment.get("assignmentType") or assignment.get("assignment_type"), 40).lower()
         viewed_vocab_ids = payload.get("viewedVocabIds", payload.get("viewed_vocab_ids", []))
-        if assignment_type == "review":
-            # Review cards are graded from the immutable server snapshot.  No
-            # answer key is trusted from the browser payload.
-            first_checks = store.list_assignment_question_checks(assignment_id, str(user["id"]))
-            result = _grade_review_assignment(assignment, answers, viewed_vocab_ids, first_checks)
-            for record in result.get("records", []):
-                if not isinstance(record, Mapping) or record.get("kind") != "question":
-                    continue
-                store.save_assignment_question_check(
-                    assignment_id,
-                    str(user["id"]),
-                    str(record.get("questionId") or record.get("id") or ""),
-                    record.get("userAnswer"),
-                    record,
-                )
-            saved, idempotent = store.submit_assignment(assignment_id, str(user["id"]), answers, result)
-            if saved is None:
-                return _assignment_not_found_or_forbidden(assignment_id, user)
-            if not idempotent:
-                store.record_usage_event(str(user["id"]), "assignment_submit", {"questionCount": int(result.get("total") or 0)})
-                store.sync_review_outcomes(str(user["id"]), assignment, result)
-                if int(result.get("total") or 0) > 0:
-                    store.record_assignment_outcomes(
-                        str(user["id"]), assignment_id, result, assignment=assignment, include_wrong=False
-                    )
-            visible = _assignment_view(store, saved, user, detail=True)
-            persisted_result = visible.get("result") or result
-            return jsonify(
-                {
-                    "ok": True,
-                    "idempotent": bool(idempotent),
-                    "result": persisted_result,
-                    "assignment": visible,
-                    "data": visible,
-                    "state": _state_snapshot(store, user, current_app),
-                    **visible,
-                }
+        revision = payload.get("draftRevision")
+        if "draftRevision" in payload and (type(revision) is not int or revision < 0):
+            return _error("draft revision is invalid", 400, "invalid_draft_revision")
+        try:
+            saved, idempotent = store.submit_assignment(
+                assignment, str(user["id"]), answers, viewed_vocab_ids, expected_revision=revision
             )
-        # A question that was already checked is immutable: a later submit
-        # cannot silently replace the first scored answer.  Unchecked rows are
-        # scored from the submit payload and become first checks themselves.
-        first_checks = store.list_assignment_question_checks(assignment_id, str(user["id"]))
-        effective_answers = _assignment_answers_mapping(answers)
-        for checked_id, checked in first_checks.items():
-            if isinstance(checked, Mapping) and "answer" in checked:
-                effective_answers[checked_id] = checked.get("answer")
-        result = _grade_assignment(assignment, effective_answers, first_checks)
-        for record in result.get("records", []):
-            if not isinstance(record, Mapping):
-                continue
-            store.save_assignment_question_check(
-                assignment_id,
-                str(user["id"]),
-                str(record.get("questionId") or record.get("id") or ""),
-                record.get("userAnswer"),
-                record,
-            )
-        saved, idempotent = store.submit_assignment(assignment_id, str(user["id"]), effective_answers, result)
+        except AssignmentDraftConflict:
+            return _error("草稿已在其他页面更新，请核对最新答案后重新提交。", 409, "draft_revision_conflict")
         if saved is None:
             return _assignment_not_found_or_forbidden(assignment_id, user)
-        if not idempotent:
-            store.record_usage_event(str(user["id"]), "assignment_submit", {"questionCount": int(result.get("total") or 0)})
-            store.record_assignment_outcomes(str(user["id"]), assignment_id, result, assignment=assignment)
         visible = _assignment_view(store, saved, user, detail=True)
-        persisted_result = visible.get("result") or result
         return jsonify(
             {
                 "ok": True,
-                "idempotent": bool(idempotent),
-                "result": persisted_result,
+                "idempotent": idempotent,
                 "assignment": visible,
                 "data": visible,
                 "state": _state_snapshot(store, user, current_app),

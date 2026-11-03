@@ -113,6 +113,7 @@ def test_register_login_session_and_logout_do_not_return_session_or_hash(tmp_pat
     assert "token" not in body
     assert "Set-Cookie" in registration.headers
     assert "HttpOnly" in registration.headers["Set-Cookie"]
+    assert "Secure" in registration.headers["Set-Cookie"]
     assert client.get("/reading-trainer/api/v2/auth/session").get_json()["authenticated"] is True
 
     assert client.post("/reading-trainer/api/v2/auth/logout").status_code == 200
@@ -1789,3 +1790,244 @@ def test_teacher_can_read_but_not_write_student_business_document(tmp_path):
     store.upsert_user({**current, "created_by": tid})
     assert teacher.get(f"/reading-trainer/api/v2/data/vbook/{sid}").status_code == 200
     assert teacher.put(f"/reading-trainer/api/v2/data/vbook/{sid}", json={"data": [{"word": "blocked"}]}).status_code == 403
+
+
+def test_assignment_draft_is_scoped_revisioned_persistent_and_submitted_guarded(tmp_path):
+    app = make_app(tmp_path)
+    teacher, student, other = (app.test_client() for _ in range(3))
+    register(teacher, "draft-teacher", role="teacher", password="teacher-password")
+    register(student, "draft-student")
+    register(other, "draft-other")
+    store = app.extensions["reading_trainer_v2"]["store"]
+    teacher_id = teacher.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    student_id = student.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    current = store.get_user(student_id)
+    store.upsert_user({**current, "created_by": teacher_id})
+    created = teacher.post(
+        "/reading-trainer/api/v2/assignments",
+        json={
+            "id": "draft-contract",
+            "studentIds": [student_id],
+            "questions": [
+                {"id": "q1", "type": "multiple-choice", "prompt": "One", "answer": "A"},
+                {"id": "q2", "type": "matching", "prompt": "Two", "items": [{"para": "P", "heading": "H"}], "answer": ["H"]},
+            ],
+        },
+    )
+    assert created.status_code == 201
+    initial = student.get("/reading-trainer/api/v2/assignments/draft-contract/draft")
+    assert initial.status_code == 200
+    assert initial.get_json() == {
+        "ok": True,
+        "draft": {"answers": {}, "viewedVocabIds": [], "revision": 0},
+        "submitted": False,
+    }
+    assert other.get("/reading-trainer/api/v2/assignments/draft-contract/draft").status_code == 403
+    assert teacher.get("/reading-trainer/api/v2/assignments/draft-contract/draft").status_code == 403
+
+    saved = student.patch(
+        "/reading-trainer/api/v2/assignments/draft-contract/draft",
+        json={"answers": {"q1": "B", "q2": ["H"]}, "viewedVocabIds": [], "revision": 0},
+    )
+    assert saved.status_code == 200
+    assert saved.get_json()["draft"] == {
+        "answers": {"q1": "B", "q2": ["H"]},
+        "viewedVocabIds": [],
+        "revision": 1,
+    }
+    cleared = student.patch(
+        "/reading-trainer/api/v2/assignments/draft-contract/draft",
+        json={"answers": {"q1": None}, "revision": 1},
+    )
+    assert cleared.status_code == 200
+    assert cleared.get_json()["draft"]["answers"] == {"q2": ["H"]}
+    assert student.post(
+        "/reading-trainer/api/v2/assignments/draft-contract/questions/q2/check", json={"answer": ["H"]}
+    ).get_json()["correct"] is True
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE assignment_recipients SET draft_answers_json = '{}' WHERE assignment_id = ? AND student_id = ?",
+            ("draft-contract", student_id),
+        )
+    checked_restore = student.get("/reading-trainer/api/v2/assignments/draft-contract/draft")
+    assert checked_restore.get_json()["draft"]["answers"] == {"q2": ["H"]}
+    assert checked_restore.get_json()["draft"]["checkedQuestionIds"] == ["q2"]
+    assert "correctAnswer" not in json.dumps(checked_restore.get_json(), ensure_ascii=False)
+    locked = student.patch(
+        "/reading-trainer/api/v2/assignments/draft-contract/draft",
+        json={"answers": {"q2": ["different"]}, "revision": 2},
+    ).get_json()["draft"]
+    assert locked["answers"] == {"q2": ["H"]} and locked["revision"] == 2
+    stale = student.patch(
+        "/reading-trainer/api/v2/assignments/draft-contract/draft",
+        json={"answers": {"q2": ["stale"]}, "revision": 1},
+    )
+    assert stale.status_code == 409
+    assert stale.get_json()["error"]["code"] == "draft_revision_conflict"
+    assert stale.get_json()["draft"]["revision"] == 2
+    assert stale.get_json()["draft"]["answers"] == {"q2": ["H"]}
+    assert student.patch(
+        "/reading-trainer/api/v2/assignments/draft-contract/draft",
+        json={"answers": {"not-a-question": "x"}, "revision": 2},
+    ).get_json()["error"]["code"] == "invalid_draft_question"
+
+    app2 = make_app(tmp_path)
+    refreshed = app2.test_client()
+    login(refreshed, "draft-student", "student", "student-password")
+    persisted = refreshed.get("/reading-trainer/api/v2/assignments/draft-contract/draft")
+    assert persisted.status_code == 200
+    assert persisted.get_json()["draft"]["answers"] == {"q2": ["H"]}
+    assert persisted.get_json()["draft"]["revision"] == 2
+
+    path = "/reading-trainer/api/v2/assignments/draft-contract"
+    latest = student.patch(path + "/draft", json={"answers": {"q1": "A"}, "revision": 2}).get_json()["draft"]
+    assert latest["revision"] == 3
+    for payload in (
+        {"draftRevision": 2, "answers": {"q1": "B"}},
+        {"answers": {"q1": "B"}},
+        {"draftRevision": 3, "answers": {"q2": ["different"]}},
+    ):
+        rejected = refreshed.post(path + "/submit", json=payload)
+        assert rejected.status_code == 409
+        assert rejected.get_json()["error"]["code"] == "draft_revision_conflict"
+    assert refreshed.get(path + "/draft").get_json()["submitted"] is False
+    submitted = refreshed.post(
+        path + "/submit", json={"draftRevision": 3, "answers": latest["answers"]}
+    )
+    assert submitted.status_code == 200
+    assert [record["userAnswer"] for record in submitted.get_json()["result"]["records"]] == ["A", ["H"]]
+    after_submit = refreshed.get("/reading-trainer/api/v2/assignments/draft-contract/draft")
+    assert after_submit.get_json()["submitted"] is True
+    blocked = refreshed.patch(
+        "/reading-trainer/api/v2/assignments/draft-contract/draft",
+        json={"answers": {"q2": ["changed"]}, "revision": 2},
+    )
+    assert blocked.status_code == 409
+    assert blocked.get_json()["error"]["code"] == "assignment_submitted"
+    assert blocked.get_json()["draft"]["answers"] == {"q1": "A", "q2": ["H"]}
+
+
+def test_review_assignment_draft_merges_viewed_vocab_without_answer_key_or_feishu_copy(tmp_path):
+    app = make_app(tmp_path)
+    teacher, student = app.test_client(), app.test_client()
+    register(teacher, "review-draft-teacher", role="teacher", password="teacher-password")
+    register(student, "review-draft-student")
+    store = app.extensions["reading_trainer_v2"]["store"]
+    teacher_id = teacher.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    student_id = student.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    current = store.get_user(student_id)
+    store.upsert_user({**current, "created_by": teacher_id})
+    store.create_assignment(
+        teacher_id,
+        {
+            "id": "review-draft-contract",
+            "assignmentType": "review",
+            "reviewItems": [
+                {"id": "rq", "kind": "question", "q": {"id": "rq", "type": "matching", "answer": ["H"]}},
+                {"id": "rv", "kind": "vocab", "word": "water", "zh": "水"},
+            ],
+        },
+        [student_id],
+    )
+    response = student.patch(
+        "/reading-trainer/api/v2/assignments/review-draft-contract/draft",
+        json={"answers": {"rq": ["H"]}, "viewedVocabIds": ["rv"], "revision": 0},
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["draft"] == {"answers": {"rq": ["H"]}, "viewedVocabIds": ["rv"], "revision": 1}
+    assert "correctAnswer" not in json.dumps(body, ensure_ascii=False)
+    app.config["READING_TRAINER_FEISHU_TABLES"] = {"assignments": "tbl-assignment-test"}
+    plan = build_feishu_sync_plan(store)
+    serialized = json.dumps(plan, ensure_ascii=False)
+    assert "draft_answers_json" not in serialized
+    assert "viewedVocabIds" not in serialized
+    assert "draft_revision" not in serialized
+    assert student.patch(
+        "/reading-trainer/api/v2/assignments/review-draft-contract/draft",
+        json={"viewedVocabIds": ["not-a-vocab"], "revision": 1},
+    ).get_json()["error"]["code"] == "invalid_draft_vocab"
+
+
+def test_regular_assignment_submit_rolls_back_all_state_when_outcomes_fail(tmp_path):
+    """A failed first submit must be retryable without duplicate side effects."""
+
+    app = make_app(tmp_path)
+    teacher, student = app.test_client(), app.test_client()
+    register(teacher, "atomic-submit-teacher", role="teacher", password="teacher-password")
+    register(student, "atomic-submit-student")
+    store = app.extensions["reading_trainer_v2"]["store"]
+    teacher_id = teacher.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    student_id = student.get("/reading-trainer/api/v2/auth/session").get_json()["user"]["id"]
+    current = store.get_user(student_id)
+    store.upsert_user({**current, "created_by": teacher_id})
+    created = teacher.post(
+        "/reading-trainer/api/v2/assignments",
+        json={
+            "id": "atomic-submit-contract",
+            "studentIds": [student_id],
+            "questions": [{"id": "q1", "type": "multiple-choice", "prompt": "One", "answer": "A"}],
+        },
+    )
+    assert created.status_code == 201
+
+    # Submit with an empty legacy payload: the server-side draft must supply
+    # the answer, so this test also covers recovery after a refresh.
+    draft = student.patch(
+        "/reading-trainer/api/v2/assignments/atomic-submit-contract/draft",
+        json={"answers": {"q1": "A"}, "revision": 0},
+    )
+    assert draft.status_code == 200
+
+    def fail_outcomes(*args, **kwargs):
+        raise RuntimeError("synthetic outcome write failure")
+
+    original_record_outcomes = store.record_assignment_outcomes
+    store.record_assignment_outcomes = fail_outcomes
+    try:
+        try:
+            failed = student.post("/reading-trainer/api/v2/assignments/atomic-submit-contract/submit", json={})
+        except RuntimeError:
+            # Flask TESTING may propagate the injected exception instead of
+            # turning it into an HTTP 500.  Either path must be fully rolled
+            # back before the retry.
+            failed = None
+    finally:
+        store.record_assignment_outcomes = original_record_outcomes
+    if failed is not None:
+        assert failed.status_code >= 500
+
+    recipient = store.get_assignment("atomic-submit-contract", student_id=student_id)["recipients"][0]
+    assert recipient["status"] != "submitted"
+    assert store.list_assignment_question_checks("atomic-submit-contract", student_id) == {}
+    assert store.get_document(student_id, "grades", []) == []
+    with store.connect() as connection:
+        submit_events = connection.execute(
+            "SELECT COUNT(*) FROM usage_events WHERE user_id = ? AND event_type = 'assignment_submit'",
+            (student_id,),
+        ).fetchone()[0]
+    assert submit_events == 0
+
+    retried = student.post("/reading-trainer/api/v2/assignments/atomic-submit-contract/submit", json={})
+    assert retried.status_code == 200
+    assert retried.get_json()["result"]["right"] == 1
+    assert retried.get_json()["idempotent"] is False
+    assert store.get_assignment("atomic-submit-contract", student_id=student_id)["recipients"][0]["status"] == "submitted"
+    assert len(store.list_assignment_question_checks("atomic-submit-contract", student_id)) == 1
+    assert len(store.get_document(student_id, "grades", [])) == 1
+
+    repeated = student.post(
+        "/reading-trainer/api/v2/assignments/atomic-submit-contract/submit",
+        json={"answers": {"q1": "B"}},
+    )
+    assert repeated.status_code == 200
+    assert repeated.get_json()["idempotent"] is True
+    assert repeated.get_json()["result"] == retried.get_json()["result"]
+    assert len(store.list_assignment_question_checks("atomic-submit-contract", student_id)) == 1
+    assert len(store.get_document(student_id, "grades", [])) == 1
+    with store.connect() as connection:
+        submit_events = connection.execute(
+            "SELECT COUNT(*) FROM usage_events WHERE user_id = ? AND event_type = 'assignment_submit'",
+            (student_id,),
+        ).fetchone()[0]
+    assert submit_events == 1

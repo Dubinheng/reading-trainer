@@ -124,6 +124,29 @@ process.stdout.write(JSON.stringify(values));
     assert "headingOptionText(h)" in headings_source
 
 
+def test_matching_answer_display_avoids_legacy_string_indexing():
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required to execute the embedded frontend helper")
+    source = FRONTEND.read_text(encoding="utf-8")
+    helper = _function_source(source, "answerDisplay", "renderQuestion")
+    harness = f"""
+function normType(value) {{ return value; }}
+function escapeHtml(value) {{ return String(value == null ? '' : value); }}
+function headingOptionValue(value) {{ return value == null ? '' : String(value); }}
+{helper}
+const values = [
+  answerDisplay({{type: 'matching', answer: 'xy', items: [{{para: 'A', heading: 'i. Alpha'}}, {{para: 'B', heading: 'ii. Beta'}}]}}),
+  answerDisplay({{type: 'matching', answer: ['i. Alpha', 'ii. Beta'], items: [{{para: 'A'}}, {{para: 'B'}}]}})
+];
+process.stdout.write(JSON.stringify(values));
+"""
+    result = subprocess.run(["node", "-e", harness], cwd=ROOT, capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == [
+        "A → i. Alpha； B → ii. Beta",
+        "A → i. Alpha； B → ii. Beta",
+    ]
+
+
 def test_assignment_flow_exposes_per_question_check_and_full_report():
     source = FRONTEND.read_text(encoding="utf-8")
     render_source = _function_source(source, "renderQuestion", "checkQuestion")
@@ -140,6 +163,20 @@ def test_assignment_flow_exposes_per_question_check_and_full_report():
     assert "能力分析与学习建议" in report_source
     assert "分项统计" in report_source
     assert "buildPracticeReportMarkup" in grade_source
+
+
+def test_normal_assignment_questions_ignore_empty_review_items_placeholder():
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required to execute the embedded frontend helper")
+    source = FRONTEND.read_text(encoding="utf-8")
+    helper = _function_source(source, "assignmentQuestions", "assignmentReviewItems")
+    harness = f"""
+{helper}
+const result = assignmentQuestions({{reviewItems: [], questions: [{{id: 'q1', prompt: 'A question'}}]}});
+process.stdout.write(JSON.stringify(result));
+"""
+    result = subprocess.run(["node", "-e", harness], cwd=ROOT, capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == [{"id": "q1", "prompt": "A question"}]
 
 
 def test_assignment_send_requires_server_ack_and_all_recipients():

@@ -1313,6 +1313,12 @@
   #itr-app .itr-assignment-reminder { display:none; margin:0 0 14px; padding:12px 14px; border:1px solid #9acbf3; border-radius:var(--itr-r-md); background:var(--itr-primary-soft); color:var(--itr-primary-on-soft); }
   #itr-app .itr-assignment-reminder.show { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   #itr-app .itr-assignment-reminder .spacer { flex:1; }
+  #itr-app .itr-assignment-draft-status { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-height:22px; margin-top:8px; color:var(--itr-muted); font-size:12px; }
+  #itr-app .itr-assignment-draft-status.pending { color:var(--itr-amber); }
+  #itr-app .itr-assignment-draft-status.saving { color:var(--itr-primary); }
+  #itr-app .itr-assignment-draft-status.error { color:var(--itr-red); }
+  #itr-app .itr-assignment-draft-status.saved { color:var(--itr-green); }
+  #itr-app .itr-assignment-draft-status button { font:inherit; padding:2px 7px; }
   #itr-app .itr-student-context { display:none; margin-top:4px; padding:10px 12px; border-radius:10px; background:var(--itr-fill); font-size:13px; color:var(--itr-ink-2); }
   #itr-app .itr-student-context b { color:var(--itr-text); }
   .itr-tc-header { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
@@ -2186,7 +2192,15 @@
       return r.json().catch(function(){ return {}; }).then(function(data){
         if (!r.ok || data.success === false) {
           var detail = data && data.error;
-          throw new Error((detail && detail.message) || (typeof detail === 'string' ? detail : '') || ('服务器请求失败（' + r.status + '）'));
+          var error = new Error((detail && detail.message) || (typeof detail === 'string' ? detail : '') || ('服务器请求失败（' + r.status + '）'));
+          // Keep the HTTP status and structured error body available to
+          // recovery flows. Ordinary callers still receive an Error with the
+          // same user-facing message, while draft/submission recovery can
+          // distinguish a revision conflict from auth or transport failure.
+          error.status = r.status;
+          error.data = data;
+          error.code = detail && detail.code ? detail.code : '';
+          throw error;
         }
         return data;
       });
@@ -2546,8 +2560,20 @@
   function answerDisplay(q) {
     if (!q) return "—";
     var t = normType(q.type);
-    if (t === "headings" || t === "matching") {
-      return (q.items || []).map(function (it, i) { return escapeHtml(it.para) + " → " + escapeHtml(headingOptionValue(q.answer && q.answer[i]) || "—"); }).join("； ");
+    if (t === "headings") {
+      var headingAnswers = Array.isArray(q.answer) ? q.answer : [];
+      return (q.items || []).map(function (it, i) { return escapeHtml(it.para) + " → " + escapeHtml(headingOptionValue(headingAnswers[i]) || "—"); }).join("； ");
+    }
+    if (t === "matching") {
+      var matchingAnswers = Array.isArray(q.answer) ? q.answer : [];
+      return (q.items || []).map(function (it, i) {
+        // Matching questions historically stored the canonical heading on the
+        // item itself; only use indexed answers when the answer is a real
+        // array, never a character from a legacy string.
+        var canonical = it && (it.heading || it.correctAnswer || it.correct_answer);
+        var value = canonical != null ? canonical : matchingAnswers[i];
+        return escapeHtml(it.para) + " → " + escapeHtml(headingOptionValue(value) || "—");
+      }).join("； ");
     }
     if (t === "sentence-end") {
       var a = q.answer || {};
@@ -3082,7 +3108,7 @@
   function renderQuestion(q, options) {
     options = options || {};
     var assignmentMode = !!options.assignment;
-    var html = '<div class="itr-q" data-type="' + q.type + '">';
+    var html = '<div class="itr-q" data-type="' + q.type + '"' + (q.id != null ? ' data-question-id="' + escapeHtml(String(q.id)) + '"' : '') + '>';
     html += '<div class="itr-q-head"><span class="itr-q-num">Q' + q.id + ".</span>" + badge(q.exam, typeLabel(q.type)) + "</div>";
     var cardSource = q.article || q.passage || q.sourceText || q.source_text || '';
     if (cardSource) {
@@ -3641,6 +3667,13 @@
     if (button) { button.disabled = true; button.classList.add("itr-busy"); }
     var path = assignmentPath(context.assignmentId, "/questions/" + encodeURIComponent(String(q.id)) + "/check");
     apiV2(path, { method: "POST", body: JSON.stringify({ answer: userAnswer, response: userAnswer }) }).then(function (response) {
+      var draft = assignmentState.draft, key = String(q.id);
+      if (draft && String(draft.id) === String(context.assignmentId) && Object.prototype.hasOwnProperty.call(response, 'userAnswer')) {
+        draft.checkedQuestionIds = assignmentDraftViewed((draft.checkedQuestionIds || []).concat(key));
+        draft.answers[key] = assignmentDraftValue(response.userAnswer);
+        delete draft.pendingAnswers[key];
+      }
+      if (Object.prototype.hasOwnProperty.call(response, 'userAnswer')) setAssignmentAnswer(card, q, response.userAnswer);
       renderAssignmentQuestionFeedback(card, q, assignmentResponseResult(response), context);
     }).catch(function (err) {
       if (button) { button.disabled = false; button.classList.remove("itr-busy"); }
@@ -4047,9 +4080,325 @@
   // ---------- Assignments (server-backed, in-memory UI state only) ----------
   var assignmentState = {
     list: [], filter: "all", active: null, summary: {}, unread: 0, loading: false,
-    vocabSelection: null, vocabExtract: null, vocabFilters: {}, reviewViewedVocabIds: [], wrongFilter: 'pending'
+    vocabSelection: null, vocabExtract: null, vocabFilters: {}, reviewViewedVocabIds: [], wrongFilter: 'pending',
+    // Draft state is deliberately memory-only. Each assignment gets its own
+    // queue so an answer from one open card can never be replayed to another.
+    draft: null, drafts: {}, openToken: 0, entryOpenKey: ''
   };
   var assignmentRefreshTimer = null;
+  function assignmentDraftValue(value) {
+    if (value == null) return null;
+    if (typeof value === 'string' && value.trim() === '') return null;
+    if (Array.isArray(value)) {
+      var hasArrayValue = value.some(function (item) { return assignmentDraftValue(item) !== null; });
+      return hasArrayValue ? cloneData(value, []) : null;
+    }
+    if (typeof value === 'object') {
+      var keys = Object.keys(value), hasObjectValue = keys.some(function (key) { return assignmentDraftValue(value[key]) !== null; });
+      return hasObjectValue ? cloneData(value, {}) : null;
+    }
+    return value;
+  }
+  function assignmentDraftAnswers(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    var out = {};
+    Object.keys(value).forEach(function (key) { out[String(key)] = assignmentDraftValue(value[key]); });
+    return out;
+  }
+  function assignmentDraftViewed(value) {
+    if (!Array.isArray(value)) return [];
+    var seen = {}, out = [];
+    value.forEach(function (item) { if (item == null || item === '') return; var id = String(item); if (!seen[id]) { seen[id] = true; out.push(id); } });
+    return out;
+  }
+  function assignmentDraftPayload(value) {
+    var raw = value && value.draft && typeof value.draft === 'object' ? value.draft : (value && value.currentDraft && typeof value.currentDraft === 'object' ? value.currentDraft : value);
+    raw = raw && typeof raw === 'object' ? raw : {};
+    var revisionRaw = raw.revision;
+    var revision = Number(revisionRaw);
+    if (!isFinite(revision) || revision < 0) revision = 0;
+    return {
+      answers: assignmentDraftAnswers(raw.answers),
+      viewedVocabIds: assignmentDraftViewed(raw.viewedVocabIds || raw.viewed_vocab_ids),
+      revision: revision,
+      checkedQuestionIds: assignmentDraftViewed(raw.checkedQuestionIds),
+      submitted: !!((value && value.submitted) || raw.submitted),
+      firstChecks: raw.firstChecks || raw.first_checks || raw.checks || {}
+    };
+  }
+  function requireAssignmentDraftResponse(response) {
+    var draft = response && response.draft;
+    if (!response || response.ok !== true || typeof response.submitted !== 'boolean' ||
+        !draft || !Number.isSafeInteger(draft.revision) || draft.revision < 0 ||
+        !draft.answers || typeof draft.answers !== 'object' || Array.isArray(draft.answers) ||
+        !Array.isArray(draft.viewedVocabIds)) throw new Error('服务器未确认草稿');
+    return response;
+  }
+  function restoreCheckedAssignmentAnswer(card, question, value) {
+    setAssignmentAnswer(card, question, value);
+    assignmentLockAnswerControls(card);
+    var button = card.querySelector('.itr-assignment-check');
+    if (button) { button.disabled = true; button.textContent = '已核对'; }
+  }
+  function assignmentDraftKey(id) { return String(id == null ? '' : id); }
+  function assignmentDraftIsCurrent(id, token, draft) {
+    return !!(draft && assignmentState.draft === draft && assignmentState.openToken === token && assignmentState.active && String(assignmentId(assignmentState.active)) === assignmentDraftKey(id));
+  }
+  function assignmentDraftPendingCount(draft) {
+    return draft ? Object.keys(draft.pendingAnswers || {}).length : 0;
+  }
+  function assignmentDraftHasUnacknowledged(draft) {
+    draft = draft || assignmentState.draft;
+    return !!(draft && (assignmentDraftPendingCount(draft) || draft.viewedDirty || draft.inFlight || draft.conflict));
+  }
+  function assignmentDraftStatusElement() { return document.getElementById('itr-assignment-draft-status'); }
+  function assignmentDraftSetStatus(status, text, draft) {
+    draft = draft || assignmentState.draft;
+    if (draft) { draft.status = status; draft.statusText = text || ''; }
+    var el = assignmentDraftStatusElement();
+    if (!el || (draft && assignmentState.draft !== draft)) return;
+    el.className = 'itr-assignment-draft-status' + (status ? ' ' + status : '');
+    el.textContent = text || '';
+    if (status === 'error' && draft && draft.conflict) {
+      var retry = document.createElement('button'); retry.type = 'button'; retry.className = 'itr-btn itr-ghost'; retry.setAttribute('data-draft-retry-local', '1'); retry.textContent = '重试我的答案';
+      var reload = document.createElement('button'); reload.type = 'button'; reload.className = 'itr-btn itr-ghost'; reload.setAttribute('data-draft-reload-server', '1'); reload.textContent = '使用服务器答案';
+      el.appendChild(retry); el.appendChild(reload);
+      retry.addEventListener('click', function () { assignmentDraftResolveConflict('local', draft); });
+      reload.addEventListener('click', function () { assignmentDraftResolveConflict('server', draft); });
+    } else if (status === 'error' && draft && !draft.submitted) {
+      var button = document.createElement('button'); button.type = 'button'; button.className = 'itr-btn itr-ghost'; button.setAttribute('data-draft-retry', '1'); button.textContent = '重试保存';
+      el.appendChild(button); button.addEventListener('click', function () { assignmentDraftRetry(draft); });
+    }
+  }
+  function assignmentDraftMergeViewed(serverValues, localValues) {
+    return assignmentDraftViewed((serverValues || []).concat(localValues || []));
+  }
+  function assignmentDraftServerFromError(error) {
+    var data = error && error.data;
+    if (!data || typeof data !== 'object') return null;
+    var nested = data.error && typeof data.error === 'object' ? data.error : null;
+    var candidates = [data.draft, data.currentDraft, data.current && data.current.draft, data.current, nested && nested.draft, nested && nested.currentDraft];
+    for (var i = 0; i < candidates.length; i++) if (candidates[i] && typeof candidates[i] === 'object' && (candidates[i].answers || candidates[i].revision != null || candidates[i].viewedVocabIds)) return assignmentDraftPayload(candidates[i]);
+    return null;
+  }
+  function assignmentDraftSameValue(left, right) {
+    left = assignmentDraftValue(left); right = assignmentDraftValue(right);
+    if (left === right) return true;
+    if (!left || !right || typeof left !== 'object' || typeof right !== 'object' || Array.isArray(left) !== Array.isArray(right)) return false;
+    var keys = Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every(function (key) {
+      return Object.prototype.hasOwnProperty.call(right, key) && assignmentDraftSameValue(left[key], right[key]);
+    });
+  }
+  function assignmentDraftStoreServer(draft, server) {
+    if (!draft || !server) return;
+    draft.serverAnswers = assignmentDraftAnswers(server.answers);
+    draft.serverViewedVocabIds = assignmentDraftViewed(server.viewedVocabIds);
+    draft.revision = Number(server.revision) || 0;
+    draft.checkedQuestionIds = assignmentDraftViewed((draft.checkedQuestionIds || []).concat(server.checkedQuestionIds || []));
+  }
+  function assignmentDraftApplyRendered(draft) {
+    if (!draft || assignmentState.draft !== draft || !assignmentState.renderedCards || !assignmentState.renderedQuestions) return;
+    assignmentState.renderedQuestions.forEach(function (question, index) {
+      if (!assignmentState.renderedCards[index]) return;
+      var key = String(question.id), value = Object.prototype.hasOwnProperty.call(draft.answers || {}, key) ? draft.answers[key] : null;
+      if ((draft.checkedQuestionIds || []).indexOf(key) !== -1) restoreCheckedAssignmentAnswer(assignmentState.renderedCards[index], question, value);
+      else setAssignmentAnswer(assignmentState.renderedCards[index], question, value);
+    });
+  }
+  function assignmentDraftResolveConflict(choice, draft) {
+    if (!draft || !draft.conflict) return;
+    var conflict = draft.conflict, server = conflict.server;
+    if (choice === 'server') {
+      Object.keys(conflict.conflicts || {}).forEach(function (key) {
+        draft.answers[key] = assignmentDraftValue(server.answers[key]);
+        delete draft.pendingAnswers[key];
+      });
+      draft.viewedVocabIds = assignmentDraftMergeViewed(server.viewedVocabIds, draft.viewedVocabIds);
+    } else {
+      // The user explicitly chose to replay the local value. The server's
+      // revision becomes the new optimistic-concurrency base.
+      Object.keys(conflict.conflicts || {}).forEach(function (key) { draft.pendingAnswers[key] = assignmentDraftValue(draft.answers[key]); });
+    }
+    draft.conflict = null;
+    assignmentDraftStoreServer(draft, server);
+    assignmentDraftApplyRendered(draft);
+    if (assignmentDraftPendingCount(draft) || draft.viewedDirty) assignmentDraftScheduleSave(draft, true);
+    else assignmentDraftSetStatus('saved', '已使用服务器版本', draft);
+  }
+  function assignmentDraftHandleConflict(error, draft, snapshot) {
+    var server = assignmentDraftServerFromError(error);
+    if (!server) {
+      assignmentDraftSetStatus('error', '草稿版本冲突，请重试或重新打开作业。', draft);
+      return;
+    }
+    var conflicts = {}, pending = snapshot.answers || {};
+    Object.keys(pending).forEach(function (key) {
+      if ((server.checkedQuestionIds || []).indexOf(key) !== -1) { delete draft.pendingAnswers[key]; return; }
+      var base = draft.serverAnswers && Object.prototype.hasOwnProperty.call(draft.serverAnswers, key) ? draft.serverAnswers[key] : null;
+      var local = draft.answers[key], remote = server.answers[key];
+      if (!assignmentDraftSameValue(local, remote) && !assignmentDraftSameValue(base, remote)) conflicts[key] = { local: local, server: remote, base: base };
+      else if (assignmentDraftSameValue(local, remote)) delete draft.pendingAnswers[key];
+    });
+    assignmentDraftStoreServer(draft, server);
+    draft.answers = Object.assign({}, server.answers, draft.pendingAnswers);
+    assignmentDraftApplyRendered(draft);
+    draft.viewedVocabIds = assignmentDraftMergeViewed(server.viewedVocabIds, draft.viewedVocabIds);
+    if (Object.keys(conflicts).length) {
+      draft.conflict = { server: server, conflicts: conflicts };
+      assignmentDraftSetStatus('error', '检测到其他页面修改了同一道题，请选择保留哪一份答案。', draft);
+      return;
+    }
+    draft.conflict = null;
+    if (assignmentDraftPendingCount(draft) || draft.viewedDirty) assignmentDraftScheduleSave(draft, true);
+    else assignmentDraftSetStatus('saved', '草稿已同步', draft);
+  }
+  function assignmentDraftRetry(draft) {
+    if (!draft || draft.submitted) return;
+    draft.conflict = null; draft.error = null;
+    if (assignmentDraftPendingCount(draft) || draft.viewedDirty) assignmentDraftScheduleSave(draft, true);
+    else assignmentDraftSetStatus('saved', '已保存', draft);
+  }
+  function assignmentDraftScheduleSave(draft, immediate) {
+    if (!draft || draft.submitted || draft.unsupported || draft.conflict) return;
+    if (draft.retryTimer) { clearTimeout(draft.retryTimer); draft.retryTimer = null; }
+    if (!assignmentDraftPendingCount(draft) && !draft.viewedDirty) { assignmentDraftSetStatus('saved', '已保存', draft); return; }
+    assignmentDraftSetStatus('pending', '草稿未保存', draft);
+    var wait = immediate ? 0 : 250;
+    draft.retryTimer = setTimeout(function () { draft.retryTimer = null; assignmentDraftFlush(draft).catch(function () {}); }, wait);
+  }
+  function assignmentDraftFlush(draft) {
+    if (!draft || draft.submitted || draft.unsupported || draft.inFlight || draft.conflict) return Promise.resolve(null);
+    if (!assignmentDraftPendingCount(draft) && !draft.viewedDirty) { assignmentDraftSetStatus('saved', '已保存', draft); return Promise.resolve(null); }
+    if (window.navigator && window.navigator.onLine === false) {
+      assignmentDraftSetStatus('error', '当前网络不可用，草稿仍在内存中。', draft);
+      return Promise.reject(new Error('网络不可用'));
+    }
+    var id = draft.id, requestToken = draft.token, snapshot = {
+      answers: cloneData(draft.pendingAnswers, {}),
+      viewedVocabIds: cloneData(draft.viewedVocabIds, []),
+      revision: Number(draft.revision) || 0
+    };
+    draft.inFlight = snapshot;
+    assignmentDraftSetStatus('saving', '正在保存草稿…', draft);
+    return apiV2(assignmentPath(id, '/draft'), { method: 'PATCH', body: JSON.stringify({ answers: snapshot.answers, viewedVocabIds: snapshot.viewedVocabIds, revision: snapshot.revision }) }).then(function (response) {
+      requireAssignmentDraftResponse(response);
+      var server = assignmentDraftPayload(response);
+      if (server.revision < snapshot.revision || Object.keys(snapshot.answers).some(function (key) {
+        return server.checkedQuestionIds.indexOf(key) === -1 && !assignmentDraftSameValue(snapshot.answers[key], server.answers[key]);
+      }) || snapshot.viewedVocabIds.some(function (key) { return server.viewedVocabIds.indexOf(key) === -1; })) {
+        throw new Error('服务器未确认本次草稿改动');
+      }
+      // A draft may be replayed while its assignment is temporarily hidden;
+      // token identity, rather than visibility, decides whether this response
+      // belongs to the current queue. UI updates are separately scoped by
+      // assignmentDraftSetStatus.
+      if (draft.token !== requestToken) return response;
+      var previousAnswers = draft.answers;
+      assignmentDraftStoreServer(draft, server);
+      draft.answers = assignmentDraftAnswers(server.answers || draft.answers);
+      draft.checkedQuestionIds.forEach(function (key) {
+        delete draft.pendingAnswers[key];
+        if (server.checkedQuestionIds.indexOf(key) === -1) draft.answers[key] = previousAnswers[key];
+      });
+      // Replay edits made while the request was in flight. Only remove a
+      // pending key when the acknowledged value is still the current value.
+      Object.keys(snapshot.answers).forEach(function (key) {
+        if (Object.prototype.hasOwnProperty.call(draft.pendingAnswers, key) && assignmentDraftSameValue(draft.pendingAnswers[key], snapshot.answers[key])) delete draft.pendingAnswers[key];
+      });
+      // Keep edits made while the request was in flight visible. The server
+      // response is the new baseline, but a newer local value must remain
+      // authoritative until its replay request is acknowledged.
+      Object.keys(draft.pendingAnswers || {}).forEach(function (key) {
+        draft.answers[key] = cloneData(draft.pendingAnswers[key], null);
+      });
+      if (assignmentState.draft === draft && assignmentState.renderedQuestions) {
+        assignmentState.renderedQuestions.forEach(function (question, index) {
+          var key = String(question.id);
+          if (server.checkedQuestionIds.indexOf(key) !== -1 && assignmentState.renderedCards[index]) {
+            restoreCheckedAssignmentAnswer(assignmentState.renderedCards[index], question, draft.answers[key]);
+          }
+        });
+      }
+      if (assignmentDraftSameValue(draft.viewedVocabIds, snapshot.viewedVocabIds)) draft.viewedDirty = false;
+      draft.inFlight = null; draft.error = null;
+      if (server.submitted || response.submitted) { draft.submitted = true; draft.pendingAnswers = {}; draft.viewedDirty = false; assignmentDraftSetStatus('saved', '作业已提交', draft); }
+      else if (assignmentDraftPendingCount(draft) || draft.viewedDirty) assignmentDraftScheduleSave(draft, true);
+      else assignmentDraftSetStatus('saved', '已保存', draft);
+      return response;
+    }).catch(function (error) {
+      if (draft.token !== requestToken) return Promise.reject(error);
+      draft.inFlight = null;
+      if (error && error.code === 'assignment_submitted') {
+        draft.submitted = true; draft.pendingAnswers = {}; draft.viewedDirty = false;
+        assignmentDraftSetStatus('saved', '作业已提交', draft);
+        if (assignmentDraftIsCurrent(id, requestToken, draft)) openAssignment(id);
+        return null;
+      }
+      if (error && Number(error.status) === 409) assignmentDraftHandleConflict(error, draft, snapshot);
+      else { draft.error = error; assignmentDraftSetStatus('error', '草稿保存失败，点击“重试保存”。', draft); }
+      throw error;
+    });
+  }
+  function assignmentDraftRecordAnswer(id, question, card) {
+    var draft = assignmentState.draft;
+    if (!draft || String(draft.id) !== String(id) || draft.submitted) return;
+    var key = String(question && question.id != null ? question.id : ''); if (!key) return;
+    if ((draft.checkedQuestionIds || []).indexOf(key) !== -1) return;
+    var value = assignmentDraftValue(collectAssignmentAnswer(card, question));
+    // A text input fires change on blur even after its input event. Avoid
+    // rebuilding the conflict choices while the student is clicking one.
+    if (assignmentDraftSameValue(draft.answers[key], value)) return;
+    draft.answers[key] = value; draft.pendingAnswers[key] = cloneData(value, null);
+    assignmentDraftScheduleSave(draft, false);
+  }
+  function assignmentDraftRecordViewed(id, vocabId) {
+    var draft = assignmentState.draft;
+    if (!draft || String(draft.id) !== String(id) || draft.submitted || vocabId == null) return;
+    var value = String(vocabId);
+    if (draft.viewedVocabIds.indexOf(value) === -1) draft.viewedVocabIds.push(value);
+    draft.viewedDirty = true;
+    assignmentDraftScheduleSave(draft, false);
+  }
+  function assignmentDraftBindInputs(card, question, id) {
+    if (!card || !question || card.getAttribute('data-draft-bound') === '1') return;
+    card.setAttribute('data-draft-bound', '1');
+    var capture = function () { assignmentDraftRecordAnswer(id, question, card); };
+    card.querySelectorAll('.itr-opt, .itr-tfng button').forEach(function (el) { el.addEventListener('click', capture); });
+    card.querySelectorAll('input, select, textarea').forEach(function (el) { el.addEventListener('input', capture); el.addEventListener('change', capture); });
+  }
+  function assignmentDraftInstall(id, response, token) {
+    var key = assignmentDraftKey(id), server = assignmentDraftPayload(response), draft = assignmentState.drafts[key];
+    var hasLocal = draft && assignmentDraftHasUnacknowledged(draft);
+    if (!draft || !hasLocal || draft.unsupported) {
+      draft = { id: id, token: token, answers: server.answers, serverAnswers: cloneData(server.answers, {}), viewedVocabIds: server.viewedVocabIds, serverViewedVocabIds: cloneData(server.viewedVocabIds, []), revision: server.revision, submitted: server.submitted, pendingAnswers: {}, viewedDirty: false, inFlight: null, retryTimer: null, conflict: null, firstChecks: server.firstChecks || {}, unsupported: !!(response && response.unsupported) };
+    } else {
+      draft.token = token; draft.unsupported = false; draft.inFlight = null;
+      if (draft.retryTimer) { clearTimeout(draft.retryTimer); draft.retryTimer = null; }
+      var oldPending = cloneData(draft.pendingAnswers, {}), oldAnswers = cloneData(draft.answers, {});
+      assignmentDraftStoreServer(draft, server);
+      draft.answers = server.answers;
+      Object.keys(oldPending).forEach(function (answerId) { draft.answers[answerId] = oldAnswers[answerId]; draft.pendingAnswers[answerId] = oldPending[answerId]; });
+      draft.viewedVocabIds = assignmentDraftMergeViewed(server.viewedVocabIds, draft.viewedVocabIds);
+      draft.firstChecks = server.firstChecks || draft.firstChecks || {};
+      draft.submitted = server.submitted;
+    }
+    draft.checkedQuestionIds = server.checkedQuestionIds;
+    server.checkedQuestionIds.forEach(function (questionId) {
+      draft.answers[questionId] = server.answers[questionId];
+      delete draft.pendingAnswers[questionId];
+    });
+    assignmentState.drafts[key] = draft; assignmentState.draft = draft;
+    if (draft.unsupported) assignmentDraftSetStatus('saved', '此服务器暂不支持草稿自动保存，提交前请保持页面打开。', draft);
+    return draft;
+  }
+  function assignmentDraftReadyForSubmit(id) {
+    var draft = assignmentState.draft;
+    if (!draft || String(draft.id) !== String(id) || draft.unsupported) return true;
+    if (draft.submitted) return false;
+    if (assignmentDraftHasUnacknowledged(draft)) { assignmentDraftSetStatus('error', '请先等待草稿保存完成，再提交作业。', draft); return false; }
+    return true;
+  }
   function assignmentPath(id, suffix) {
     return '/assignments/' + encodeURIComponent(String(id)) + (suffix || '');
   }
@@ -4074,7 +4423,12 @@
   function assignmentQuestions(a) {
     if (!a) return [];
     var review = a.reviewItems || a.review_items;
-    if (Array.isArray(review)) return review.filter(function (item) { return String(item && (item.kind || item.type) || '').toLowerCase() !== 'vocab' && String(item && (item.kind || item.type) || '').toLowerCase() !== 'vocabulary'; }).map(assignmentReviewQuestion);
+    var assignmentType = String(a.assignmentType || a.assignment_type || a.type || '').toLowerCase();
+    // Normal assignments may carry an empty reviewItems field for historical
+    // compatibility. Only treat it as the question source for an actual
+    // review task or when it has review items; otherwise continue to the
+    // normal questions/sections candidates below.
+    if (Array.isArray(review) && (review.length || assignmentType === 'review')) return review.filter(function (item) { return String(item && (item.kind || item.type) || '').toLowerCase() !== 'vocab' && String(item && (item.kind || item.type) || '').toLowerCase() !== 'vocabulary'; }).map(assignmentReviewQuestion);
     var candidates = [a.redactedQuestions, a.redacted_questions, a.questions, a.questionCards, a.question_cards, a.cards];
     for (var ci = 0; ci < candidates.length; ci++) {
       var qs = candidates[ci];
@@ -4292,7 +4646,7 @@
       '<div class="itr-assignment-card-head"><h4>' + escapeHtml(assignmentTitle(a)) + (review ? ' <span class="itr-badge type">复习任务</span>' : '') + '</h4><span class="itr-assignment-status ' + statusClass + '">' + statusText + '</span></div>';
     if (meta.length) html += '<div class="itr-assignment-meta">' + escapeHtml(meta.join(' · ')) + '</div>';
     var desc = assignmentDescription(a); if (desc) html += '<div class="itr-assignment-desc">' + escapeHtml(desc) + '</div>';
-    html += '<div class="itr-assignment-actions"><button type="button" class="itr-btn ' + (done ? 'itr-ghost' : 'itr-primary') + '" data-assignment-open="' + escapeHtml(id) + '">' + (done ? '查看结果' : '打开并答题') + '</button></div></article>';
+    html += '<div class="itr-assignment-actions"><button type="button" class="itr-btn ' + (done ? 'itr-ghost' : 'itr-primary') + '" data-assignment-open="' + escapeHtml(id) + '">' + (done ? '查看结果' : '打开并答题') + '</button><a class="itr-link" data-assignment-link="' + escapeHtml(id) + '" href="' + escapeHtml(assignmentUrlWithId(id)) + '">稳定链接</a></div></article>';
     return html;
   }
   function renderAssignmentsPane() {
@@ -4425,14 +4779,13 @@
     return records.filter(function (record) { return String(record.questionId != null ? record.questionId : record.id) === id; })[0] || null;
   }
   function setAssignmentAnswer(card, q, value) {
-    if (value == null) return;
     var type = normType(q.type);
     if (type === 'multiple-choice' || type === 'vocabulary') {
-      card.querySelectorAll('.itr-opt').forEach(function (opt) { opt.classList.toggle('sel', String(opt.getAttribute('data-label')) === String(value)); });
+      card.querySelectorAll('.itr-opt').forEach(function (opt) { opt.classList.toggle('sel', value != null && String(opt.getAttribute('data-label')) === String(value)); });
     } else if (type === 'true-false-notgiven') {
-      card.querySelectorAll('.itr-tfng button').forEach(function (button) { button.classList.toggle('sel', String(button.getAttribute('data-label')) === String(value)); });
+      card.querySelectorAll('.itr-tfng button').forEach(function (button) { button.classList.toggle('sel', value != null && String(button.getAttribute('data-label')) === String(value)); });
     } else if (type === 'fill-blank') {
-      var fill = card.querySelector('.itr-fib input'); if (fill) fill.value = String(value);
+      var fill = card.querySelector('.itr-fib input'); if (fill) fill.value = value == null ? '' : String(value);
     } else if (type === 'matching' || type === 'headings') {
       var values = Array.isArray(value) ? value : [];
       card.querySelectorAll('select').forEach(function (select, i) { select.value = headingOptionValue(values[i]); });
@@ -4459,38 +4812,84 @@
       renderAssignmentQuestionFeedback(card, q, { correct: record ? record.correct : undefined, explanation: q.explanation }, { assignmentId: assignmentId(detail) });
     });
   }
+  function assignmentSubmissionConfirmed(response) {
+    var assignment = assignmentObjectFromResponse(response) || (response && response.data && typeof response.data === 'object' ? response.data : null) || {};
+    var status = String((response && (response.status || response.state)) || assignment.status || assignment.studentStatus || '').toLowerCase().replace(/[ _-]+/g, '');
+    return !!(response && (response.submitted === true || assignment.submitted === true || assignment.completed === true || status === 'submitted' || status === 'completed' || status === 'complete' || status === 'done' || status === 'finished'));
+  }
+  function refetchAssignmentSubmission(id) {
+    return apiV2(assignmentPath(id), { cache: 'no-store' }).then(function (detailResponse) {
+      var detail = assignmentObjectFromResponse(detailResponse) || detailResponse;
+      return loadAssignmentDraft(id).then(function (draftResponse) {
+        var confirmed = assignmentSubmissionConfirmed(detailResponse) || assignmentDraftPayload(draftResponse).submitted;
+        return { confirmed: confirmed, response: Object.assign({}, detailResponse, { assignment: detail, result: detail && detail.result }), detail: detail, draft: draftResponse };
+      });
+    });
+  }
+  function finalizeAssignmentSubmission(detail, cards, questions, answerEl, response) {
+    var id = assignmentId(detail), res = response || {}, submitted = assignmentObjectFromResponse(res) || {};
+    if (res && res.state) applyServerState(res.state);
+    var result = assignmentResponseResult(res);
+    var merged = Object.assign({}, detail, submitted, { id: id, status: 'submitted', submitted: true, completed: true, result: result });
+    var savedQuestions = assignmentQuestions(submitted).map(normalizeAssignmentQuestion);
+    savedQuestions.forEach(function (saved) {
+      var q = questions.filter(function (item) { return String(item.id) === String(saved.id); })[0];
+      if (q) { if (saved.answer != null) q.answer = saved.answer; if (saved.explanation) q.explanation = saved.explanation; }
+    });
+    cards.forEach(function (card, i) {
+      var record = assignmentRecordForQuestion(result, questions[i], i);
+      if (record && record.userAnswer != null) setAssignmentAnswer(card, questions[i], record.userAnswer);
+      if (record && record.correctAnswer != null) questions[i].answer = questions[i].type === 'headings' ? normalizeHeadingAnswer(record.correctAnswer) : record.correctAnswer;
+      if (record && record.explanation) questions[i].explanation = record.explanation;
+      if (questions[i].answer != null) checkQuestion(card, questions[i]);
+      renderAssignmentQuestionFeedback(card, questions[i], { correct: record ? record.correct : undefined, explanation: questions[i].explanation }, { assignmentId: id });
+    });
+    var draft = assignmentState.draft;
+    if (draft && String(draft.id) === String(id)) { draft.submitted = true; draft.pendingAnswers = {}; draft.viewedDirty = false; draft.inFlight = null; draft.conflict = null; assignmentDraftSetStatus('saved', '作业已提交', draft); }
+    assignmentState.list = (assignmentState.list || []).map(function (a) { return String(assignmentId(a)) === String(id) ? Object.assign({}, a, { status: 'completed', submitted: true, completed: true }) : a; });
+    assignmentState.active = merged;
+    if (answerEl) renderAssignmentResult(answerEl, result, merged);
+    refreshAssignmentSummary();
+    showToast('作业提交成功。');
+  }
   function submitAssignmentAnswers(detail, cards, questions, answerEl) {
     var id = assignmentId(detail); if (id == null) return;
+    if (!assignmentDraftReadyForSubmit(id)) return;
     var answers = {};
-    questions.forEach(function (q, i) { answers[String(q.id != null ? q.id : i + 1)] = collectAssignmentAnswer(cards[i], q); });
+    questions.forEach(function (q, i) { answers[String(q.id != null ? q.id : i + 1)] = assignmentDraftValue(collectAssignmentAnswer(cards[i], q)); });
     var button = answerEl.querySelector('#itr-assignment-submit'); if (button) { button.disabled = true; button.classList.add('itr-busy'); }
-    var submitPayload = { assignmentId: id, answers: answers, responses: answers, viewedVocabIds: (assignmentState.reviewViewedVocabIds || []).slice() };
+    var draft = assignmentState.draft, viewed = (assignmentState.reviewViewedVocabIds || []).slice();
+    if (draft && String(draft.id) === String(id)) viewed = assignmentDraftMergeViewed(viewed, draft.viewedVocabIds);
+    var submitPayload = { assignmentId: id, answers: answers, responses: answers, viewedVocabIds: viewed };
+    if (draft && String(draft.id) === String(id) && !draft.unsupported) submitPayload.draftRevision = draft.revision;
     apiV2(assignmentPath(id, '/submit'), { method: 'POST', body: JSON.stringify(submitPayload) }).then(function (res) {
       if (res && res.state) applyServerState(res.state);
-      var submitted = assignmentObjectFromResponse(res) || {};
-      var result = assignmentResponseResult(res);
-      var merged = Object.assign({}, detail, submitted, { id: id, status: 'submitted', completed: true, result: result });
-      var savedQuestions = assignmentQuestions(submitted).map(normalizeAssignmentQuestion);
-      savedQuestions.forEach(function (saved) {
-        var q = questions.filter(function (item) { return String(item.id) === String(saved.id); })[0];
-        if (q) { if (saved.answer != null) q.answer = saved.answer; if (saved.explanation) q.explanation = saved.explanation; }
-      });
-      cards.forEach(function (card, i) {
-        var record = assignmentRecordForQuestion(result, questions[i], i);
-        if (record && record.userAnswer != null) setAssignmentAnswer(card, questions[i], record.userAnswer);
-        if (record && record.correctAnswer != null) questions[i].answer = questions[i].type === 'headings' ? normalizeHeadingAnswer(record.correctAnswer) : record.correctAnswer;
-        if (record && record.explanation) questions[i].explanation = record.explanation;
-        if (questions[i].answer != null) checkQuestion(card, questions[i]);
-        renderAssignmentQuestionFeedback(card, questions[i], { correct: record ? record.correct : undefined, explanation: questions[i].explanation }, { assignmentId: id });
-      });
+      if (!assignmentSubmissionConfirmed(res)) return refetchAssignmentSubmission(id).then(function (confirmed) { if (!confirmed.confirmed) throw new Error('服务器未确认作业已提交'); return confirmed.response; });
+      return res;
+    }).then(function (res) {
       if (button) { button.disabled = true; button.classList.remove('itr-busy'); button.textContent = '已提交'; }
-      assignmentState.list = (assignmentState.list || []).map(function (a) { return String(assignmentId(a)) === String(id) ? Object.assign({}, a, { status: 'completed', completed: true }) : a; });
-      assignmentState.active = merged;
-      renderAssignmentResult(answerEl, result, merged); refreshAssignmentSummary();
-      showToast('作业提交成功。');
+      finalizeAssignmentSubmission(detail, cards, questions, answerEl, res);
     }).catch(function (err) {
-      if (button) { button.disabled = false; button.classList.remove('itr-busy'); }
-      showToast('提交作业失败：' + err.message);
+      if (err && err.code === 'draft_revision_conflict') {
+        showToast('草稿已在其他页面更新，请核对最新答案后重新提交。', 'error');
+        openAssignment(id);
+        return;
+      }
+      // A timeout/502 can mean the server committed before the response was
+      // lost. Refetch both the assignment and its draft before asking the user
+      // to retry, so a second submit cannot duplicate or overwrite it.
+      refetchAssignmentSubmission(id).then(function (confirmed) {
+        if (confirmed.confirmed) {
+          if (button) { button.disabled = true; button.classList.remove('itr-busy'); button.textContent = '已提交'; }
+          finalizeAssignmentSubmission(detail, cards, questions, answerEl, confirmed.response);
+          return;
+        }
+        if (button) { button.disabled = false; button.classList.remove('itr-busy'); button.textContent = '重新提交'; }
+        showToast('提交作业失败：' + (err && err.message ? err.message : '服务器未确认保存'), 'error');
+      }).catch(function () {
+        if (button) { button.disabled = false; button.classList.remove('itr-busy'); button.textContent = '重新提交'; }
+        showToast('提交状态无法确认，请点击“重新提交”前先刷新作业。', 'error');
+      });
     });
   }
   function assignmentArticleEntries(detail) {
@@ -4665,6 +5064,9 @@
     var completedResult = assignmentIsCompleted(detail) ? assignmentResponseResult(detail.result || detail) : null;
     var completedVocabulary = completedResult && (completedResult.vocabulary || completedResult.vocab || completedResult.vocabularySummary || completedResult.vocabulary_summary) || {};
     var completedViewedIds = (completedVocabulary.viewedIds || completedVocabulary.viewed_ids || []).map(String);
+    var activeDraft = assignmentState.draft && String(assignmentState.draft.id) === String(assignmentId(detail)) ? assignmentState.draft : null;
+    var draftViewedIds = activeDraft ? assignmentDraftViewed(activeDraft.viewedVocabIds) : [];
+    completedViewedIds = assignmentDraftMergeViewed(completedViewedIds, draftViewedIds);
     var questions = (reviewMode ? reviewItems.filter(function (item) { return item.kind === 'question'; }).map(function (item) { return item.question; }) : assignmentQuestions(detail).map(normalizeAssignmentQuestion));
     answerEl.style.display = 'block';
     var title = assignmentTitle(detail);
@@ -4688,11 +5090,15 @@
       if (!questions.length && !vocabItems.length) html += '<div class="itr-book-empty">该复习任务暂无内容，请刷新后重试。</div>';
     } else if (!questions.length) html += '<div class="itr-book-empty">该作业暂未返回可答题内容，请刷新后重试。</div>';
     html += '<div class="itr-assignment-question-list">' + questions.map(function (q) { return renderQuestion(q, { assignment: true }); }).join('') + '</div>';
-    if ((questions.length || reviewMode) && !assignmentIsCompleted(detail)) html += '<div class="itr-btns"><button type="button" class="itr-btn itr-primary" id="itr-assignment-submit">提交批改与分析</button></div>';
+    if ((questions.length || reviewMode) && !assignmentIsCompleted(detail)) html += '<div class="itr-btns"><button type="button" class="itr-btn itr-primary" id="itr-assignment-submit">提交批改与分析</button></div><div id="itr-assignment-draft-status" class="itr-assignment-draft-status" role="status" aria-live="polite"></div>';
+    else if (activeDraft && !activeDraft.submitted) html += '<div id="itr-assignment-draft-status" class="itr-assignment-draft-status" role="status" aria-live="polite"></div>';
     answerEl.innerHTML = html;
     assignmentState.vocabSelection = null; assignmentState.vocabExtract = null; assignmentState.vocabFilters = {};
     assignmentState.reviewViewedVocabIds = completedViewedIds.slice();
-    answerEl.querySelector('#itr-assignment-close').addEventListener('click', function () { answerEl.style.display = 'none'; assignmentState.active = null; assignmentState.vocabSelection = null; assignmentState.vocabExtract = null; });
+    answerEl.querySelector('#itr-assignment-close').addEventListener('click', function () {
+      if (!assignmentGuardNavigation('assignment-close')) return;
+      answerEl.style.display = 'none'; assignmentState.active = null; assignmentState.draft = null; assignmentState.vocabSelection = null; assignmentState.vocabExtract = null; updateAssignmentUrl(null, false);
+    });
     var sourceEl = answerEl.querySelector('#itr-assignment-source-text');
     if (sourceEl) {
       ['mouseup', 'keyup', 'touchend'].forEach(function (eventName) {
@@ -4702,11 +5108,33 @@
       answerEl.querySelector('#itr-assignment-vocab-add').addEventListener('click', function () { addAssignmentSelection(detail, sourceEl); });
     }
     var cards = Array.prototype.slice.call(answerEl.querySelectorAll('.itr-q'));
-    cards.forEach(function (card, i) { bindQuestion(card, questions[i], { assignmentId: assignmentId(detail) }); });
+    cards.forEach(function (card, i) {
+      bindQuestion(card, questions[i], { assignmentId: assignmentId(detail) });
+      if (activeDraft) {
+        var key = String(questions[i].id), value = activeDraft.answers[key];
+        if (activeDraft.checkedQuestionIds.indexOf(key) !== -1) restoreCheckedAssignmentAnswer(card, questions[i], value);
+        else setAssignmentAnswer(card, questions[i], value);
+        assignmentDraftBindInputs(card, questions[i], assignmentId(detail));
+      }
+    });
+    assignmentState.renderedCards = cards; assignmentState.renderedQuestions = questions;
+    if (activeDraft && !activeDraft.submitted) {
+      var rawChecks = activeDraft.firstChecks || detail.firstChecks || detail.first_checks || detail.questionChecks || detail.question_checks || {};
+      if (Array.isArray(rawChecks)) {
+        var checkMap = {}; rawChecks.forEach(function (item) { if (item && item.questionId != null) checkMap[String(item.questionId)] = item; }); rawChecks = checkMap;
+      }
+      if (rawChecks && typeof rawChecks === 'object') Object.keys(rawChecks).forEach(function (questionId) {
+        var index = questions.map(function (q) { return String(q.id); }).indexOf(String(questionId));
+        if (index < 0 || !rawChecks[questionId]) return;
+        renderAssignmentQuestionFeedback(cards[index], questions[index], assignmentResponseResult(rawChecks[questionId]), { assignmentId: assignmentId(detail) });
+      });
+      assignmentDraftSetStatus(activeDraft.unsupported ? 'saved' : (activeDraft.status || (assignmentDraftHasUnacknowledged(activeDraft) ? 'pending' : 'saved')), activeDraft.unsupported ? '此服务器暂不支持草稿自动保存，提交前请保持页面打开。' : (activeDraft.statusText || (assignmentDraftHasUnacknowledged(activeDraft) ? '草稿未保存' : '已保存')), activeDraft);
+    }
     answerEl.querySelectorAll('.itr-review-vocab-view').forEach(function (button) {
       button.addEventListener('click', function () {
         var item = button.closest('[data-review-vocab-id]'), id = item && item.getAttribute('data-review-vocab-id');
         if (id != null && assignmentState.reviewViewedVocabIds.indexOf(String(id)) === -1) assignmentState.reviewViewedVocabIds.push(String(id));
+        assignmentDraftRecordViewed(assignmentId(detail), id);
         if (item) { item.classList.add('flip'); var state = item.querySelector('.itr-review-state'); if (state) state.textContent = '已查看'; button.textContent = '已查看'; button.disabled = true; }
       });
     });
@@ -4716,16 +5144,31 @@
     }
     var submit = answerEl.querySelector('#itr-assignment-submit');
     if (submit) submit.addEventListener('click', function () { submitAssignmentAnswers(detail, cards, questions, answerEl); });
+    updateAssignmentUrl(assignmentId(detail), true);
     answerEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+  function loadAssignmentDraft(id) {
+    return apiV2(assignmentPath(id, '/draft'), { cache: 'no-store' }).then(requireAssignmentDraftResponse).catch(function (err) {
+      // A 404 means the old server has no draft route. It is distinct from a
+      // valid revision 0 draft, which arrives as HTTP 200.
+      if (err && Number(err.status) === 404) return { ok: true, unsupported: true, draft: { answers: {}, viewedVocabIds: [], revision: 0 } };
+      throw err;
+    });
+  }
   function openAssignment(id) {
-    if (id == null) return;
+    if (id == null) return Promise.resolve(null);
+    if (assignmentState.active && String(assignmentId(assignmentState.active)) !== String(id) && !assignmentGuardNavigation('assignment-open')) return Promise.resolve(null);
+    var token = ++assignmentState.openToken;
     var answerEl = $('itr-assignment-answer');
     if (answerEl) { answerEl.style.display = 'block'; answerEl.innerHTML = '<div class="itr-status"><span class="itr-spinner"></span>正在打开作业…</div>'; }
     var openResult = null;
     return apiV2(assignmentPath(id, '/open'), { method: 'POST', body: '{}' }).catch(function () { return null; }).then(function (opened) {
       openResult = assignmentObjectFromResponse(opened);
-      return apiV2(assignmentPath(id));
+      // The current /open contract already returns the role-scoped detail.
+      // Keep a GET fallback for older servers that acknowledge the open but
+      // return no usable card, avoiding an unnecessary serial request today.
+      if (openResult && assignmentId(openResult) != null) return opened;
+      return apiV2(assignmentPath(id), { cache: 'no-store' });
     }).catch(function (err) {
       if (openResult) return openResult;
       throw err;
@@ -4733,13 +5176,31 @@
       var detail = assignmentObjectFromResponse(res) || openResult || (assignmentState.list || []).filter(function (a) { return String(assignmentId(a)) === String(id); })[0];
       if (!detail) throw new Error('作业不存在或已被删除');
       detail = Object.assign({}, detail, { id: assignmentId(detail) || id });
-      assignmentState.active = detail;
-      assignmentState.list = (assignmentState.list || []).map(function (a) { return String(assignmentId(a)) === String(id) ? Object.assign({}, a, detail, { read: true, unread: false, isNew: false }) : a; });
-      assignmentState.unread = assignmentState.list.filter(assignmentIsNew).length;
-      renderAssignmentsPane(); renderAssignmentAnswer(detail);
+      return loadAssignmentDraft(id).then(function (draftResponse) {
+        if (token !== assignmentState.openToken) return null;
+        var draft = assignmentDraftInstall(id, draftResponse, token), parsed = assignmentDraftPayload(draftResponse);
+        if (draft.submitted || parsed.submitted) detail = Object.assign({}, detail, { status: 'submitted', submitted: true, completed: true });
+        assignmentState.active = detail; assignmentState.draft = draft;
+        assignmentState.list = (assignmentState.list || []).map(function (a) { return String(assignmentId(a)) === String(id) ? Object.assign({}, a, detail, { read: true, unread: false, isNew: false }) : a; });
+        assignmentState.unread = assignmentState.list.filter(assignmentIsNew).length;
+        renderAssignmentsPane(); renderAssignmentAnswer(detail);
+        return detail;
+      });
     }).catch(function (err) {
-      if (answerEl) answerEl.innerHTML = '<div class="itr-status err">打开作业失败：' + escapeHtml(err.message) + '</div>';
+      if (!answerEl || token !== assignmentState.openToken) return null;
+      answerEl.innerHTML = '<div class="itr-status err" role="alert">打开作业失败：' + escapeHtml(err.message || '服务器未确认读取') + '</div><button type="button" class="itr-btn itr-ghost" id="itr-assignment-open-retry">重试</button>';
+      var retry = answerEl.querySelector('#itr-assignment-open-retry'); if (retry) retry.addEventListener('click', function () { openAssignment(id); });
+      return null;
     });
+  }
+  function openEntryAssignmentIfNeeded() {
+    var id = assignmentEntryId();
+    if (!id || !currentUser || currentUser.role !== 'student') return Promise.resolve(null);
+    var key = String(currentUser.id || '') + ':' + String(id);
+    if (assignmentState.entryOpenKey === key && assignmentState.active && String(assignmentId(assignmentState.active)) === String(id)) return Promise.resolve(assignmentState.active);
+    assignmentState.entryOpenKey = key;
+    switchTab('assignments');
+    return refreshAssignmentSummary().then(function () { return openAssignment(id); });
   }
   function startAssignmentRefresh() {
     if (assignmentRefreshTimer) return;
@@ -6069,9 +6530,52 @@
   // ---------- Role routing & tab shell (P0) ----------
   var currentRole = null;
   var currentTab = "practice";
+  var ENTRY_SENSITIVE_PARAMS = { answer:1, answers:1, draft:1, response:1, responses:1, viewedvocabids:1, token:1, password:1 };
   function getParam(name) {
     try { var p = new URLSearchParams(window.location.search); return p.get(name); } catch (e) { return null; }
   }
+  function assignmentEntryId() {
+    var names = ['assignment', 'assignmentId', 'assignment_id'];
+    try {
+      var params = new URLSearchParams(window.location.search);
+      for (var i = 0; i < names.length; i++) { var value = params.get(names[i]); if (value) return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value) ? value : null; }
+      var hash = String(window.location.hash || '').replace(/^#/, '');
+      if (hash) { var hashParams = new URLSearchParams(hash); for (var j = 0; j < names.length; j++) { var hashValue = hashParams.get(names[j]); if (hashValue) return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(hashValue) ? hashValue : null; } }
+    } catch (e) {}
+    return null;
+  }
+  function assignmentUrlWithId(id) {
+    try {
+      var url = new URL(window.location.href), params = new URLSearchParams(url.search), keys = [];
+      params.forEach(function (_, key) { keys.push(key); });
+      keys.forEach(function (key) { if (ENTRY_SENSITIVE_PARAMS[String(key).toLowerCase()]) params.delete(key); });
+      ['assignment', 'assignmentId', 'assignment_id'].forEach(function (key) { params.delete(key); });
+      if (id != null && id !== '') params.set('assignment', String(id));
+      url.search = params.toString() ? '?' + params.toString() : '';
+      return url.pathname + url.search + url.hash;
+    } catch (e) { return window.location.pathname + (id != null ? '?assignment=' + encodeURIComponent(String(id)) : '') + (window.location.hash || ''); }
+  }
+  function updateAssignmentUrl(id, replace) {
+    if (!window.history || !window.history.replaceState) return;
+    var next = assignmentUrlWithId(id);
+    try { window.history[replace === false ? 'pushState' : 'replaceState']({ assignment: id == null ? null : String(id) }, '', next); } catch (e) {}
+  }
+  function assignmentGuardNavigation(reason) {
+    var draft = assignmentState && assignmentState.draft;
+    if (!assignmentDraftHasUnacknowledged(draft)) return true;
+    if (typeof window.confirm !== 'function') return false;
+    return window.confirm('这份作业还有未确认保存的答案。离开将保留在本页内存中，但可能无法提交，确定继续吗？');
+  }
+  window.addEventListener('beforeunload', function (event) {
+    if (!assignmentDraftHasUnacknowledged()) return;
+    event.preventDefault(); event.returnValue = '';
+  });
+  window.addEventListener('online', function () {
+    Object.keys(assignmentState.drafts || {}).forEach(function (key) {
+      var draft = assignmentState.drafts[key];
+      if (draft && !draft.submitted && (assignmentDraftPendingCount(draft) || draft.viewedDirty)) assignmentDraftFlush(draft).catch(function () {});
+    });
+  });
   function saveRole(role) {
     currentRole = role;
     var s = loadSettingsRaw() || {}; s.role = role;
@@ -6113,6 +6617,7 @@
     });
   }
   function switchTab(name) {
+    if (currentTab === 'assignments' && name !== 'assignments' && !assignmentGuardNavigation('tab')) return;
     currentTab = name;
     var app = $("itr-app");
     app.querySelectorAll(".itr-pane").forEach(function (p) { p.classList.toggle("active", p.getAttribute("data-pane") === name); });
@@ -6299,7 +6804,16 @@ function showRoleGate() {
   function getStudentsByClass(classId){ return getAccounts().filter(function(a){ return a.role==='student' && String(a.classId || a.class_id || '') === String(classId); }); }
 
   function getSession(){ return currentUser; }
-  function setSession(u){ currentUser = u || null; if(u) app.setAttribute('data-itr-session','1'); else app.removeAttribute('data-itr-session'); }
+  function resetAssignmentDraftMemory() {
+    if (typeof assignmentState === 'undefined') return;
+    Object.keys(assignmentState.drafts || {}).forEach(function (key) { var draft = assignmentState.drafts[key]; if (draft && draft.retryTimer) clearTimeout(draft.retryTimer); });
+    assignmentState.drafts = {}; assignmentState.draft = null; assignmentState.active = null; assignmentState.renderedCards = []; assignmentState.renderedQuestions = []; assignmentState.entryOpenKey = '';
+  }
+  function setSession(u){
+    if (currentUser && u && String(currentUser.id || '') !== String(u.id || '')) resetAssignmentDraftMemory();
+    if (currentUser && !u) resetAssignmentDraftMemory();
+    currentUser = u || null; if(u) app.setAttribute('data-itr-session','1'); else app.removeAttribute('data-itr-session');
+  }
   function clearSession(){ setSession(null); }
 
   // ===== Feishu Bitable sync (server-side OAuth, non-destructive upsert) =====
@@ -6345,7 +6859,7 @@ function showRoleGate() {
     return apiV2('/auth/login', {method:'POST', body:JSON.stringify({username:user,password:pass,role:role})})
       .then(function(res){
         document.getElementById('itr-auth-pass').value='';
-        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData(); refreshAssignmentSummary();
+        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData(); refreshAssignmentSummary(); openEntryAssignmentIfNeeded();
         showToast('欢迎回来，' + user + '！' + (role==='teacher' ? '（教师模式）' : '（学生模式）'));
       }).catch(function(err){ errEl.textContent=err.message; });
   }
@@ -6364,7 +6878,7 @@ function showRoleGate() {
     return apiV2('/auth/register', {method:'POST', body:JSON.stringify({username:user,password:pass,role:role,code:code})})
       .then(function(res){
         document.getElementById('itr-reg-pass').value='';
-        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData(); syncAllToFeishu(); refreshAssignmentSummary();
+        applyServerState(res.state); setSession(res.user); hideAuthGate(); loadSettings(); initRole(); migrateLegacyBrowserData(); syncAllToFeishu(); refreshAssignmentSummary(); openEntryAssignmentIfNeeded();
         showToast('注册成功！欢迎，' + user + (role==='teacher' ? ' 老师' : '同学'));
       }).catch(function(err){ errEl.textContent=err.message; });
   }
@@ -6375,7 +6889,7 @@ function showRoleGate() {
     showAuthGate(true);
     $('itr-cards').innerHTML = '';
     $('itr-worksheet').innerHTML = '';
-    assignmentState.list = []; assignmentState.active = null; assignmentState.summary = {}; assignmentState.unread = 0; updateAssignmentIndicators();
+    assignmentState.list = []; assignmentState.active = null; assignmentState.summary = {}; assignmentState.unread = 0; resetAssignmentDraftMemory(); updateAssignmentIndicators();
     apiV2('/auth/logout', {method:'POST', body:'{}'}).catch(function(){});
   }
 
@@ -7002,17 +7516,56 @@ function showRoleGate() {
     doGenerate:doGenerate, apiGenerate:apiGenerate, PROVIDERS:PROVIDERS,
     loadArticles:loadArticles, articleListFromResponse:articleListFromResponse
   };
+  function bootstrapErrorIsAuth(err) {
+    var status = Number(err && err.status), code = String(err && (err.code || err.message) || '').toLowerCase();
+    return status === 401 || status === 403 || /unauthor|登录已过期|未登录|invalid[_ -]?session/.test(code);
+  }
   function bootstrapBackend(){
-    return apiV2('/bootstrap').then(function(res){
+    // Login/register can complete while the initial anonymous bootstrap is
+    // still in flight. Never let that older response replace the newer
+    // account or put the authenticated UI behind a stale auth gate.
+    var bootstrapUser = currentUser || null;
+    var bootstrapUserId = String(bootstrapUser && bootstrapUser.id || '');
+    var bootstrapIsStale = function () {
+      var now = currentUser || null;
+      return now !== bootstrapUser || String(now && now.id || '') !== bootstrapUserId;
+    };
+    var controller = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = controller ? setTimeout(function () { controller.abort(); }, 12000) : null;
+    var options = controller ? { signal: controller.signal, cache: 'no-store' } : { cache: 'no-store' };
+    return apiV2('/bootstrap', options).then(function(res){
+      if (!res || res.success !== true || Number(res.api_version) !== 2 || !res.state || typeof res.state !== 'object' || typeof res.authenticated !== 'boolean') {
+        var malformed = new Error('启动响应格式异常'); malformed.status = 502; throw malformed;
+      }
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (bootstrapIsStale()) return res;
       applyServerState(res.state); serverAdmin=!!(res.admin || res.article_admin); serverAdminUser=(res.user && (res.user.role==='admin'||res.user.role==='article_admin')) ? res.user : null; applyAdminNavigation(); setSession(res.user || null);
       uiMemory.settings=cloneData(loadSettingsRaw(),{});
-      loadSettings(); initTheme(); initRole(); migrateLegacyBrowserData(); refreshAssignmentSummary();
+      loadSettings(); initTheme(); initRole(); migrateLegacyBrowserData(); refreshAssignmentSummary(); openEntryAssignmentIfNeeded();
+      var retry = document.getElementById('itr-bootstrap-retry'); if (retry) retry.style.display = 'none';
       if (serverAdmin && serverAdminUser) { hideAuthGate(); hideRoleGate(); hideAdminGate(); showAdminPanel(); }
       if (serverAdmin && getParam('feishu_oauth') === 'success') { hideAdminGate(); showAdminPanel(); renderAdmin('feishu'); }
+      return res;
     }).catch(function(err){
-      clearSession(); showAuthGate(true); hideRoleGate();
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (bootstrapIsStale()) return null;
+      var authFailure = bootstrapErrorIsAuth(err), hadSession = !!currentUser;
+      // Only an explicit auth failure invalidates the in-memory session. A
+      // timeout, network error, 5xx, or 502 leaves valid UI state untouched so
+      // the user can retry without losing work.
+      if (authFailure) clearSession();
+      if (!hadSession || authFailure) { showAuthGate(true); hideRoleGate(); }
       var target=document.getElementById('itr-auth-err');
-      if(target) target.textContent=(location.protocol==='file:' ? '请通过正式网址 https://kimdu.site/reading-trainer/ 打开，数据只保存在服务器。' : ('服务器连接失败：'+err.message));
+      if(target) target.textContent=(location.protocol==='file:' ? '请通过正式网址 https://kimdu.site/reading-trainer/ 打开，数据只保存在服务器。' : (authFailure ? '登录状态已失效，请重新登录。' : ('服务器暂时不可用：' + (err && err.message ? err.message : '网络连接失败') + '。请点击“重试连接”。')));
+      var retry = document.getElementById('itr-bootstrap-retry');
+      if (!retry) {
+        retry = document.createElement('button'); retry.type = 'button'; retry.id = 'itr-bootstrap-retry'; retry.className = 'itr-btn itr-ghost'; retry.textContent = '重试连接';
+        if (hadSession && !authFailure) app.insertBefore(retry, app.firstChild);
+        else if (target && target.parentNode) target.parentNode.insertBefore(retry, target.nextSibling);
+      }
+      if (retry) { retry.style.display = ''; retry.disabled = false; retry.onclick = function () { retry.disabled = true; retry.textContent = '连接中…'; bootstrapBackend().finally(function () { retry.disabled = false; retry.textContent = '重试连接'; }); }; }
+      if (hadSession && !authFailure) showToast('服务器连接暂时失败，当前页面数据未清除。');
+      return null;
     });
   }
   bootstrapBackend();
